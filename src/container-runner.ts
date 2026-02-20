@@ -147,6 +147,19 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Main group only: optional Google Calendar MCP credentials/tokens.
+  // Mounted from host so OAuth state persists across container runs.
+  if (isMain) {
+    const gcalDir = path.join(homeDir, '.gcal-mcp');
+    if (fs.existsSync(gcalDir)) {
+      mounts.push({
+        hostPath: gcalDir,
+        containerPath: '/home/node/.gcal-mcp',
+        readonly: false,
+      });
+    }
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
@@ -191,6 +204,22 @@ function readSecrets(): Record<string, string> {
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Forward host toggle so optional MCP integrations can be enabled in-container.
+  if (process.env.GCAL_MCP_ENABLED) {
+    args.push('-e', `GCAL_MCP_ENABLED=${process.env.GCAL_MCP_ENABLED}`);
+  }
+
+  // Security hardening: drop all Linux capabilities
+  args.push('--cap-drop=ALL');
+  // Prevent privilege escalation via SUID/SGID binaries
+  args.push('--security-opt=no-new-privileges');
+  // Per-container memory cap; no swap beyond this limit
+  args.push('--memory=1g', '--memory-swap=1g');
+  // Limit process count to reduce fork-bomb blast radius
+  args.push('--pids-limit=256');
+  // Keep temp files (including secrets) in memory only
+  args.push('--tmpfs', '/tmp:size=512m');
 
   // Docker: -v with :ro suffix for readonly
   for (const mount of mounts) {

@@ -57,6 +57,12 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const GCAL_CREDENTIALS_PATH = '/home/node/.gcal-mcp/gcp-oauth.keys.json';
+
+function isGcalMcpEnabled(input: ContainerInput): boolean {
+  if (!input.isMain) return false;
+  return process.env.GCAL_MCP_ENABLED === '1' || process.env.GCAL_MCP_ENABLED === 'true';
+}
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -413,6 +419,54 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  const gcalEnabled = isGcalMcpEnabled(containerInput);
+  if (gcalEnabled) {
+    if (!fs.existsSync(GCAL_CREDENTIALS_PATH)) {
+      log(`GCAL MCP enabled but credentials file missing: ${GCAL_CREDENTIALS_PATH}`);
+    } else {
+      log(`GCAL MCP enabled (credentials: ${GCAL_CREDENTIALS_PATH})`);
+    }
+  }
+
+  const allowedTools = [
+    'Bash',
+    'Read', 'Write', 'Edit', 'Glob', 'Grep',
+    'WebSearch', 'WebFetch',
+    'Task', 'TaskOutput', 'TaskStop',
+    'TeamCreate', 'TeamDelete', 'SendMessage',
+    'TodoWrite', 'ToolSearch', 'Skill',
+    'NotebookEdit',
+    'mcp__nanoclaw__*',
+    ...(gcalEnabled ? ['mcp__google-calendar__*'] : []),
+  ];
+
+  const mcpServers: Record<string, {
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+  }> = {
+    nanoclaw: {
+      command: 'node',
+      args: [mcpServerPath],
+      env: {
+        NANOCLAW_CHAT_JID: containerInput.chatJid,
+        NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+        NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+      },
+    },
+  };
+
+  if (gcalEnabled) {
+    mcpServers['google-calendar'] = {
+      command: 'npx',
+      args: ['-y', '@cocal/google-calendar-mcp'],
+      env: {
+        GOOGLE_OAUTH_CREDENTIALS: GCAL_CREDENTIALS_PATH,
+        GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.gcal-mcp/tokens.json',
+      },
+    };
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -423,31 +477,12 @@ async function runQuery(
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*'
-      ],
+      allowedTools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
-      mcpServers: {
-        nanoclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-          },
-        },
-      },
+      mcpServers,
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook()] }],
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
