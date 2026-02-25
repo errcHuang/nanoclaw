@@ -6,6 +6,7 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   WASocket,
+  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -20,6 +21,11 @@ import { logger } from '../logger.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 60000;
+const RECONNECT_WINDOW_MS = 5 * 60 * 1000;
+const RECONNECT_STORM_THRESHOLD = 20;
+const RECONNECT_COOLDOWN_MS = 10 * 60 * 1000;
 
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
@@ -36,6 +42,11 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
+  private isShuttingDown = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectEvents: number[] = [];
+  private reconnectPausedUntil = 0;
 
   private opts: WhatsAppChannelOpts;
 
@@ -44,6 +55,7 @@ export class WhatsAppChannel implements Channel {
   }
 
   async connect(): Promise<void> {
+    this.isShuttingDown = false;
     return new Promise<void>((resolve, reject) => {
       this.connectInternal(resolve).catch(reject);
     });
@@ -54,8 +66,11 @@ export class WhatsAppChannel implements Channel {
     fs.mkdirSync(authDir, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    logger.info({ version, isLatest }, 'Using WA Web version');
 
     this.sock = makeWASocket({
+      version,
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -81,25 +96,27 @@ export class WhatsAppChannel implements Channel {
       if (connection === 'close') {
         this.connected = false;
         const reason = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = reason !== DisconnectReason.loggedOut;
+        const shouldReconnect =
+          !this.isShuttingDown && reason !== DisconnectReason.loggedOut;
         logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
 
         if (shouldReconnect) {
-          logger.info('Reconnecting...');
-          this.connectInternal().catch((err) => {
-            logger.error({ err }, 'Failed to reconnect, retrying in 5s');
-            setTimeout(() => {
-              this.connectInternal().catch((err2) => {
-                logger.error({ err: err2 }, 'Reconnection retry failed');
-              });
-            }, 5000);
-          });
+          this.scheduleReconnect(reason);
         } else {
-          logger.info('Logged out. Run /setup to re-authenticate.');
-          process.exit(0);
+          if (reason === DisconnectReason.loggedOut) {
+            logger.info('Logged out. Run /setup to re-authenticate.');
+            process.exit(0);
+          }
         }
       } else if (connection === 'open') {
         this.connected = true;
+        this.reconnectAttempts = 0;
+        this.reconnectEvents = [];
+        this.reconnectPausedUntil = 0;
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
         logger.info('Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
@@ -229,8 +246,68 @@ export class WhatsAppChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    this.isShuttingDown = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.connected = false;
     this.sock?.end(undefined);
+  }
+
+  private scheduleReconnect(reason?: number): void {
+    const now = Date.now();
+    if (this.reconnectPausedUntil > now) {
+      logger.warn(
+        {
+          reason,
+          pausedUntil: new Date(this.reconnectPausedUntil).toISOString(),
+        },
+        'Reconnect paused due to connection storm',
+      );
+      return;
+    }
+
+    this.reconnectEvents = this.reconnectEvents.filter(
+      (ts) => now - ts < RECONNECT_WINDOW_MS,
+    );
+    this.reconnectEvents.push(now);
+    if (this.reconnectEvents.length >= RECONNECT_STORM_THRESHOLD) {
+      this.reconnectPausedUntil = now + RECONNECT_COOLDOWN_MS;
+      logger.error(
+        {
+          reason,
+          threshold: RECONNECT_STORM_THRESHOLD,
+          cooldownMs: RECONNECT_COOLDOWN_MS,
+        },
+        'Connection storm detected; pausing reconnect attempts',
+      );
+      return;
+    }
+
+    if (this.reconnectTimer) {
+      return;
+    }
+
+    const backoff = Math.min(
+      RECONNECT_MAX_DELAY_MS,
+      RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempts,
+    );
+    const jitter = Math.floor(Math.random() * 500);
+    const delayMs = backoff + jitter;
+    this.reconnectAttempts += 1;
+    logger.info(
+      { reason, attempt: this.reconnectAttempts, delayMs },
+      'Scheduling reconnect',
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connectInternal().catch((err) => {
+        logger.error({ err }, 'Reconnect attempt failed');
+        this.scheduleReconnect(reason);
+      });
+    }, delayMs);
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {

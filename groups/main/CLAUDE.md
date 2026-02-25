@@ -73,6 +73,50 @@ Key paths inside the container:
 - `/workspace/project/store/messages.db` (registered_groups table) - Group config
 - `/workspace/project/groups/` - All group folders
 
+## Obsidian Vault
+
+Your personal Obsidian vault may be mounted at `/workspace/extra/obsidian`.
+
+When this path exists:
+- Prefer saving durable user knowledge there as Markdown files.
+- Use wiki links (`[[Note Name]]`) when linking related notes.
+- Keep notes organized by folders:
+  - `daily/` for daily notes (`YYYY-MM-DD.md`)
+  - `projects/` for project notes
+  - `references/` for long-lived reference material
+  - `inbox/` for quick capture
+  - `contacts/` for contact information and relationship tracking
+- For "remember this" style requests, store concise facts that are likely useful later.
+- Skip trivial chatter that has no future retrieval value.
+
+### Personal Data
+- **Contacts CRM**: Personal relationship tracking data is stored at `/workspace/extra/obsidian/contacts/personal.md`
+- **Home Inventory**: Item tracking for packing/storage at `/workspace/extra/obsidian/references/home-inventory.md`
+
+### Storage & Packing Principles
+When helping with storage, organization, or packing:
+
+1. **Group Related Things**: If items have a unique/specific purpose, keep them together in the same spot (e.g., all ski gear in one closet section)
+
+2. **Visibility is Key**: Keep things visible and observable where possible. If you can't see it, you generally forget it exists. Avoid hiding items in opaque containers unless necessary.
+
+3. **Write It Down**: If it isn't written down (in the inventory), it doesn't exist from our point of view. Always document item locations and update the inventory as things change.
+
+## Google Calendar
+
+Google Calendar tools are available only when Calendar MCP is enabled by the host.
+
+When available, calendar tools appear as `mcp__google-calendar__*`.
+Use them for:
+- Listing events
+- Creating/updating/deleting events
+- Checking free/busy windows
+- Searching events
+
+Safety rules:
+- Confirm event time, timezone, and attendees before creating or modifying events.
+- If a request is ambiguous (date/time/title), ask a clarifying question first.
+
 ---
 
 ## Managing Groups
