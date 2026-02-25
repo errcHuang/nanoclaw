@@ -117,6 +117,20 @@ Safety rules:
 - Confirm event time, timezone, and attendees before creating or modifying events.
 - If a request is ambiguous (date/time/title), ask a clarifying question first.
 
+## Google Tasks
+
+Google Tasks tools are available only when Tasks MCP is enabled by the host.
+
+When available, tasks tools appear as `mcp__google-tasks__*`.
+Use them for:
+- Listing task lists and tasks
+- Creating/updating/completing/deleting tasks
+- Organizing tasks by due date and priority
+
+Safety rules:
+- Confirm task list, due date/time, and timezone before creating or modifying tasks.
+- If task details are ambiguous (title/list/due date), ask a clarifying question first.
+
 ---
 
 ## Managing Groups

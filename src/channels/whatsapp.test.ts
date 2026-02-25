@@ -84,6 +84,10 @@ vi.mock('@whiskeysockets/baileys', () => {
       timedOut: 408,
       restartRequired: 515,
     },
+    fetchLatestBaileysVersion: vi.fn().mockResolvedValue({
+      version: [2, 3000, 102],
+      isLatest: true,
+    }),
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
       state: {

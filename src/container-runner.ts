@@ -199,7 +199,13 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  return readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'GOOGLE_REFRESH_TOKEN',
+  ]);
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
@@ -208,6 +214,9 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
   // Forward host toggle so optional MCP integrations can be enabled in-container.
   if (process.env.GCAL_MCP_ENABLED) {
     args.push('-e', `GCAL_MCP_ENABLED=${process.env.GCAL_MCP_ENABLED}`);
+  }
+  if (process.env.GTASKS_MCP_ENABLED) {
+    args.push('-e', `GTASKS_MCP_ENABLED=${process.env.GTASKS_MCP_ENABLED}`);
   }
 
   // Security hardening: drop all Linux capabilities

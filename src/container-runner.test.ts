@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
+import { spawn } from 'child_process';
+import { readEnvFile } from './env.js';
 
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -47,6 +49,11 @@ vi.mock('fs', async () => {
 // Mock mount-security
 vi.mock('./mount-security.js', () => ({
   validateAdditionalMounts: vi.fn(() => []),
+}));
+
+// Mock env loader
+vi.mock('./env.js', () => ({
+  readEnvFile: vi.fn(() => ({})),
 }));
 
 // Create a controllable fake ChildProcess
@@ -106,11 +113,13 @@ function emitOutputMarker(proc: ReturnType<typeof createFakeProcess>, output: Co
 describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
     fakeProc = createFakeProcess();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    delete process.env.GTASKS_MCP_ENABLED;
   });
 
   it('timeout after output resolves as success', async () => {
@@ -198,5 +207,61 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('forwards GTASKS_MCP_ENABLED to docker args', async () => {
+    process.env.GTASKS_MCP_ENABLED = '1';
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    const mockedSpawn = vi.mocked(spawn);
+    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
+    expect(spawnArgs).toContain('-e');
+    expect(spawnArgs).toContain('GTASKS_MCP_ENABLED=1');
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('passes Google Tasks secrets from .env via stdin input', async () => {
+    vi.mocked(readEnvFile).mockReturnValue({
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-client-secret',
+      GOOGLE_REFRESH_TOKEN: 'test-refresh-token',
+    });
+
+    let stdinPayload = '';
+    fakeProc.stdin.on('data', (chunk) => {
+      stdinPayload += chunk.toString();
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const parsed = JSON.parse(stdinPayload);
+    expect(readEnvFile).toHaveBeenCalledWith([
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'ANTHROPIC_API_KEY',
+      'GOOGLE_CLIENT_ID',
+      'GOOGLE_CLIENT_SECRET',
+      'GOOGLE_REFRESH_TOKEN',
+    ]);
+    expect(parsed.secrets.GOOGLE_CLIENT_ID).toBe('test-client-id');
+    expect(parsed.secrets.GOOGLE_CLIENT_SECRET).toBe('test-client-secret');
+    expect(parsed.secrets.GOOGLE_REFRESH_TOKEN).toBe('test-refresh-token');
   });
 });

@@ -58,10 +58,35 @@ const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 const GCAL_CREDENTIALS_PATH = '/home/node/.gcal-mcp/gcp-oauth.keys.json';
+const GTASKS_MCP_PACKAGE = '@alvincrave/gtasks-mcp';
+const GTASKS_ENV_KEYS = [
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'GOOGLE_REFRESH_TOKEN',
+] as const;
 
 function isGcalMcpEnabled(input: ContainerInput): boolean {
   if (!input.isMain) return false;
   return process.env.GCAL_MCP_ENABLED === '1' || process.env.GCAL_MCP_ENABLED === 'true';
+}
+
+function isGtasksMcpEnabled(input: ContainerInput): boolean {
+  if (!input.isMain) return false;
+  return process.env.GTASKS_MCP_ENABLED === '1' || process.env.GTASKS_MCP_ENABLED === 'true';
+}
+
+function pickDefinedEnv(
+  env: Record<string, string | undefined>,
+  keys: readonly string[],
+): Record<string, string> {
+  const selected: Record<string, string> = {};
+  for (const key of keys) {
+    const value = env[key];
+    if (typeof value === 'string' && value.length > 0) {
+      selected[key] = value;
+    }
+  }
+  return selected;
 }
 
 /**
@@ -427,6 +452,15 @@ async function runQuery(
       log(`GCAL MCP enabled (credentials: ${GCAL_CREDENTIALS_PATH})`);
     }
   }
+  const gtasksEnabled = isGtasksMcpEnabled(containerInput);
+  if (gtasksEnabled) {
+    const missing = GTASKS_ENV_KEYS.filter((key) => !sdkEnv[key]);
+    if (missing.length > 0) {
+      log(`Google Tasks MCP enabled but missing env: ${missing.join(', ')}`);
+    } else {
+      log(`Google Tasks MCP enabled (package: ${GTASKS_MCP_PACKAGE})`);
+    }
+  }
 
   const allowedTools = [
     'Bash',
@@ -438,6 +472,7 @@ async function runQuery(
     'NotebookEdit',
     'mcp__nanoclaw__*',
     ...(gcalEnabled ? ['mcp__google-calendar__*'] : []),
+    ...(gtasksEnabled ? ['mcp__google-tasks__*'] : []),
   ];
 
   const mcpServers: Record<string, {
@@ -464,6 +499,13 @@ async function runQuery(
         GOOGLE_OAUTH_CREDENTIALS: GCAL_CREDENTIALS_PATH,
         GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.gcal-mcp/tokens.json',
       },
+    };
+  }
+  if (gtasksEnabled) {
+    mcpServers['google-tasks'] = {
+      command: 'npx',
+      args: ['-y', GTASKS_MCP_PACKAGE],
+      env: pickDefinedEnv(sdkEnv, GTASKS_ENV_KEYS),
     };
   }
 
