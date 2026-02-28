@@ -158,6 +158,15 @@ function buildVolumeMounts(
         readonly: false,
       });
     }
+
+    const gtasksDir = path.join(homeDir, '.gtasks-mcp');
+    if (fs.existsSync(gtasksDir)) {
+      mounts.push({
+        hostPath: gtasksDir,
+        containerPath: '/home/node/.gtasks-mcp',
+        readonly: false,
+      });
+    }
   }
 
   // Per-group IPC namespace: each group gets its own IPC directory

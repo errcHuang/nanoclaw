@@ -120,6 +120,12 @@ Safety rules:
 ## Google Tasks
 
 Google Tasks tools are available only when Tasks MCP is enabled by the host.
+Credentials are loaded from Google Calendar OAuth files when available:
+- `/home/node/.gcal-mcp/gcp-oauth.keys.json`
+- `/home/node/.gcal-mcp/tokens.json` (for refresh token)
+Fallbacks:
+- `/home/node/.gtasks-mcp/credentials.json`
+- host-provided env vars
 
 When available, tasks tools appear as `mcp__google-tasks__*`.
 Use them for:

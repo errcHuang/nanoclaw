@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
+import fs from 'fs';
 import { spawn } from 'child_process';
 import { readEnvFile } from './env.js';
 
@@ -114,6 +115,7 @@ describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    vi.mocked(fs.existsSync).mockImplementation(() => false);
     fakeProc = createFakeProcess();
   });
 
@@ -263,5 +265,30 @@ describe('container-runner timeout behavior', () => {
     expect(parsed.secrets.GOOGLE_CLIENT_ID).toBe('test-client-id');
     expect(parsed.secrets.GOOGLE_CLIENT_SECRET).toBe('test-client-secret');
     expect(parsed.secrets.GOOGLE_REFRESH_TOKEN).toBe('test-refresh-token');
+  });
+
+  it('mounts ~/.gtasks-mcp into main group containers when present', async () => {
+    const home = process.env.HOME || '/tmp';
+    const gtasksDir = `${home}/.gtasks-mcp`;
+    vi.mocked(fs.existsSync).mockImplementation(
+      (p) => p === gtasksDir,
+    );
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      { ...testInput, isMain: true },
+      () => {},
+      async () => {},
+    );
+
+    const mockedSpawn = vi.mocked(spawn);
+    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
+    expect(
+      spawnArgs.some((a) => a.includes(`${gtasksDir}:/home/node/.gtasks-mcp`)),
+    ).toBe(true);
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
   });
 });
