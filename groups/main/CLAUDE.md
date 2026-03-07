@@ -80,18 +80,24 @@ Your personal Obsidian vault may be mounted at `/workspace/extra/obsidian`.
 When this path exists:
 - Prefer saving durable user knowledge there as Markdown files.
 - Use wiki links (`[[Note Name]]`) when linking related notes.
-- Keep notes organized by folders:
-  - `daily/` for daily notes (`YYYY-MM-DD.md`)
-  - `projects/` for project notes
-  - `references/` for long-lived reference material
-  - `inbox/` for quick capture
-  - `contacts/` for contact information and relationship tracking
+- Use a single-folder model for durable notes: store purpose-built files in `references/`.
+- Each file should have one distinct purpose (for example: inventory list, contacts list, recipe list).
+- Prefer updating an existing specialized file before creating a new one.
+- Create a new file in `references/` only when the information does not fit an existing file.
+- Keep file names clear and purpose-specific (for example: `home-inventory.md`, `contacts.md`, `recipes.md`).
+- Markdown can stay freeform; no frontmatter is required.
+- Include a clear title and keep a "Last updated" line when practical.
 - For "remember this" style requests, store concise facts that are likely useful later.
 - Skip trivial chatter that has no future retrieval value.
 
 ### Personal Data
-- **Contacts CRM**: Personal relationship tracking data is stored at `/workspace/extra/obsidian/contacts/personal.md`
+- **Contacts CRM**: Personal relationship tracking data is stored at `/workspace/extra/obsidian/references/contacts.md`
 - **Home Inventory**: Item tracking for packing/storage at `/workspace/extra/obsidian/references/home-inventory.md`
+
+### Read/Write Routing
+- Contact outreach, relationship updates, and people tracking: read/write `/workspace/extra/obsidian/references/contacts.md`
+- Item location, packing, and storage updates: read/write `/workspace/extra/obsidian/references/home-inventory.md`
+- Other durable knowledge: create or update a purpose-named file under `/workspace/extra/obsidian/references/`
 
 ### Storage & Packing Principles
 When helping with storage, organization, or packing:
@@ -102,40 +108,68 @@ When helping with storage, organization, or packing:
 
 3. **Write It Down**: If it isn't written down (in the inventory), it doesn't exist from our point of view. Always document item locations and update the inventory as things change.
 
-## Google Calendar
+## Open Brain (Personal Knowledge Base)
 
-Google Calendar tools are available only when Calendar MCP is enabled by the host.
+Open Brain is your personal semantic memory store. Tools appear as `mcp__open-brain__*`.
 
-When available, calendar tools appear as `mcp__google-calendar__*`.
-Use them for:
-- Listing events
-- Creating/updating/deleting events
-- Checking free/busy windows
-- Searching events
+Use it to:
+- **Capture thoughts**: `capture_thought` — save notes, insights, decisions, or anything worth remembering; embedding and metadata are generated automatically
+- **Search by meaning**: `search_thoughts` — find past thoughts by topic, person, or idea (semantic/vector search)
+- **Browse recent**: `list_thoughts` — list recent entries, optionally filtered by type, topic, person, or time range
+- **Get stats**: `thought_stats` — total count, types breakdown, top topics, and people mentioned
+
+Types: `observation`, `task`, `idea`, `reference`, `person_note`
+
+Proactively capture important things the user mentions (decisions, people notes, ideas) without being asked, unless they're clearly ephemeral.
+
+---
+
+## Google Workspace
+
+Google Workspace access in the main group is provided through vendored `gws` CLI skills.
+
+Default operating mode:
+- Load `persona-exec-assistant` for day-to-day inbox, schedule, and task work.
+- Use helper skills before raw API calls:
+  - Gmail: `gws-gmail`, `gws-gmail-send`, `gws-gmail-triage`
+  - Calendar: `gws-calendar`, `gws-calendar-agenda`, `gws-calendar-insert`
+  - Tasks: `gws-tasks`
+  - Workflow helpers: `gws-workflow`, `gws-workflow-standup-report`, `gws-workflow-meeting-prep`, `gws-workflow-email-to-task`, `gws-workflow-weekly-digest`
+- Use recipes for common multi-step jobs:
+  - `recipe-plan-weekly-schedule`
+  - `recipe-review-overdue-tasks`
+  - `recipe-create-task-list`
+  - `recipe-create-gmail-filter`
+  - `recipe-label-and-archive-emails`
+  - `recipe-find-large-files`
+- Edge-case tools are available via `gws-drive`, `gws-docs`, `gws-sheets`, `gws-slides`, and `gws-forms`.
+
+When you need raw CLI access:
+- Start with `gws-shared` for auth/global flag rules.
+- Discover commands with `gws <service> --help`.
+- Inspect exact schemas with `gws schema <service>.<resource>.<method>`.
+- Use `--format table` for scans and `--format json` for structured follow-up work.
+
+Recommended flows:
+- Daily planning: `gws workflow +standup-report`
+- Meeting prep: `gws workflow +meeting-prep`
+- Weekly digest: `gws workflow +weekly-digest`
+- Inbox triage: `gws gmail +triage --max 10`
+- Send or draft email: `gws gmail +send`
+- Review schedule: `gws calendar +agenda`
+- Create a calendar event: `gws calendar +insert`
+- Turn email into a task: `gws workflow +email-to-task`
+- List task lists: `gws tasks tasklists list`
+- List tasks in a list: `gws tasks tasks list --params '{"tasklist":"<tasklistId>"}'`
+- Create a task: `gws tasks tasks insert --params '{"tasklist":"<tasklistId>"}' --json '{"title":"<title>"}'`
 
 Safety rules:
-- Confirm event time, timezone, and attendees before creating or modifying events.
-- If a request is ambiguous (date/time/title), ask a clarifying question first.
-
-## Google Tasks
-
-Google Tasks tools are available only when Tasks MCP is enabled by the host.
-Credentials are loaded from Google Calendar OAuth files when available:
-- `/home/node/.gcal-mcp/gcp-oauth.keys.json`
-- `/home/node/.gcal-mcp/tokens.json` (for refresh token)
-Fallbacks:
-- `/home/node/.gtasks-mcp/credentials.json`
-- host-provided env vars
-
-When available, tasks tools appear as `mcp__google-tasks__*`.
-Use them for:
-- Listing task lists and tasks
-- Creating/updating/completing/deleting tasks
-- Organizing tasks by due date and priority
-
-Safety rules:
-- Confirm task list, due date/time, and timezone before creating or modifying tasks.
-- If task details are ambiguous (title/list/due date), ask a clarifying question first.
+- Confirm before any write, delete, send, archive, filter, or scheduling action.
+- For calendar changes, confirm date, timezone, attendees, and whether conflicts are acceptable.
+- For task writes, confirm the destination task list and due date if one matters.
+- For Gmail actions, confirm recipient, subject, and any irreversible mailbox changes.
+- Prefer `--dry-run` when a helper or raw command supports it.
+- If a request is ambiguous, ask a clarifying question before acting.
 
 ---
 

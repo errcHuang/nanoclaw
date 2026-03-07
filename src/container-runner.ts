@@ -57,6 +57,19 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
+  fs.mkdirSync(dstDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir)) {
+    const srcPath = path.join(srcDir, entry);
+    const dstPath = path.join(dstDir, entry);
+    if (fs.statSync(srcPath).isDirectory()) {
+      copyDirectoryRecursive(srcPath, dstPath);
+    } else {
+      fs.copyFileSync(srcPath, dstPath);
+    }
+  }
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -133,12 +146,7 @@ function buildVolumeMounts(
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
-      fs.mkdirSync(dstDir, { recursive: true });
-      for (const file of fs.readdirSync(srcDir)) {
-        const srcFile = path.join(srcDir, file);
-        const dstFile = path.join(dstDir, file);
-        fs.copyFileSync(srcFile, dstFile);
-      }
+      copyDirectoryRecursive(srcDir, dstDir);
     }
   }
   mounts.push({
@@ -147,23 +155,14 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Main group only: optional Google Calendar MCP credentials/tokens.
+  // Main group only: optional Google Workspace CLI auth state.
   // Mounted from host so OAuth state persists across container runs.
   if (isMain) {
-    const gcalDir = path.join(homeDir, '.gcal-mcp');
-    if (fs.existsSync(gcalDir)) {
+    const gwsConfigDir = path.join(homeDir, '.config', 'gws');
+    if (fs.existsSync(gwsConfigDir)) {
       mounts.push({
-        hostPath: gcalDir,
-        containerPath: '/home/node/.gcal-mcp',
-        readonly: false,
-      });
-    }
-
-    const gtasksDir = path.join(homeDir, '.gtasks-mcp');
-    if (fs.existsSync(gtasksDir)) {
-      mounts.push({
-        hostPath: gtasksDir,
-        containerPath: '/home/node/.gtasks-mcp',
+        hostPath: gwsConfigDir,
+        containerPath: '/home/node/.config/gws',
         readonly: false,
       });
     }
@@ -211,21 +210,24 @@ function readSecrets(): Record<string, string> {
   return readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
-    'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET',
-    'GOOGLE_REFRESH_TOKEN',
+    'OPEN_BRAIN_KEY',
   ]);
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(
+  mounts: VolumeMount[],
+  containerName: string,
+  isMain: boolean,
+): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Forward host toggle so optional MCP integrations can be enabled in-container.
-  if (process.env.GCAL_MCP_ENABLED) {
-    args.push('-e', `GCAL_MCP_ENABLED=${process.env.GCAL_MCP_ENABLED}`);
-  }
-  if (process.env.GTASKS_MCP_ENABLED) {
-    args.push('-e', `GTASKS_MCP_ENABLED=${process.env.GTASKS_MCP_ENABLED}`);
+  if (isMain) {
+    args.push(
+      '-e',
+      'GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/home/node/.config/gws',
+      '-e',
+      'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/node/.config/gws/client_secret.json',
+    );
   }
 
   // Security hardening: drop all Linux capabilities
@@ -267,7 +269,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
 
   logger.debug(
     {

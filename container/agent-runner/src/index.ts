@@ -57,121 +57,6 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
-const GCAL_CREDENTIALS_PATH = '/home/node/.gcal-mcp/gcp-oauth.keys.json';
-const GCAL_TOKENS_PATH = '/home/node/.gcal-mcp/tokens.json';
-const GTASKS_CREDENTIALS_JSON_PATH = '/home/node/.gtasks-mcp/credentials.json';
-const GTASKS_MCP_PACKAGE = '@alvincrave/gtasks-mcp';
-const GTASKS_ENV_KEYS = [
-  'GOOGLE_CLIENT_ID',
-  'GOOGLE_CLIENT_SECRET',
-  'GOOGLE_REFRESH_TOKEN',
-] as const;
-
-function isGcalMcpEnabled(input: ContainerInput): boolean {
-  if (!input.isMain) return false;
-  return process.env.GCAL_MCP_ENABLED === '1' || process.env.GCAL_MCP_ENABLED === 'true';
-}
-
-function isGtasksMcpEnabled(input: ContainerInput): boolean {
-  if (!input.isMain) return false;
-  return process.env.GTASKS_MCP_ENABLED === '1' || process.env.GTASKS_MCP_ENABLED === 'true';
-}
-
-function getNestedString(obj: unknown, pathParts: string[]): string | undefined {
-  let current: unknown = obj;
-  for (const part of pathParts) {
-    if (!current || typeof current !== 'object') return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return typeof current === 'string' && current.length > 0 ? current : undefined;
-}
-
-function readGtasksCredentialsFromFile(filePath: string): Record<string, string> {
-  if (!fs.existsSync(filePath)) return {};
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    const extracted: Record<string, string> = {};
-
-    const id =
-      getNestedString(parsed, ['GOOGLE_CLIENT_ID']) ||
-      getNestedString(parsed, ['google_client_id']) ||
-      getNestedString(parsed, ['client_id']) ||
-      getNestedString(parsed, ['clientId']) ||
-      getNestedString(parsed, ['installed', 'client_id']) ||
-      getNestedString(parsed, ['web', 'client_id']);
-    const secret =
-      getNestedString(parsed, ['GOOGLE_CLIENT_SECRET']) ||
-      getNestedString(parsed, ['google_client_secret']) ||
-      getNestedString(parsed, ['client_secret']) ||
-      getNestedString(parsed, ['clientSecret']) ||
-      getNestedString(parsed, ['installed', 'client_secret']) ||
-      getNestedString(parsed, ['web', 'client_secret']);
-    const refresh =
-      getNestedString(parsed, ['GOOGLE_REFRESH_TOKEN']) ||
-      getNestedString(parsed, ['google_refresh_token']) ||
-      getNestedString(parsed, ['refresh_token']) ||
-      getNestedString(parsed, ['refreshToken']) ||
-      getNestedString(parsed, ['token', 'refresh_token']);
-
-    if (id) extracted.GOOGLE_CLIENT_ID = id;
-    if (secret) extracted.GOOGLE_CLIENT_SECRET = secret;
-    if (refresh) extracted.GOOGLE_REFRESH_TOKEN = refresh;
-    return extracted;
-  } catch (err) {
-    log(
-      `Failed to parse Google Tasks credentials file ${filePath}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return {};
-  }
-}
-
-function readRefreshTokenFromTokensFile(filePath: string): string | undefined {
-  if (!fs.existsSync(filePath)) return undefined;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    return (
-      getNestedString(parsed, ['refresh_token']) ||
-      getNestedString(parsed, ['token', 'refresh_token']) ||
-      getNestedString(parsed, ['tokens', 'refresh_token']) ||
-      getNestedString(parsed, ['normal', 'refresh_token'])
-    );
-  } catch (err) {
-    log(
-      `Failed to parse refresh token file ${filePath}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return undefined;
-  }
-}
-
-function buildGtasksEnv(
-  sdkEnv: Record<string, string | undefined>,
-): Record<string, string> {
-  // Prefer dedicated Google Tasks credentials when provided.
-  const fromGtasksFile = readGtasksCredentialsFromFile(GTASKS_CREDENTIALS_JSON_PATH);
-  const fromGcalKeys = readGtasksCredentialsFromFile(GCAL_CREDENTIALS_PATH);
-  const fromGcalRefresh = readRefreshTokenFromTokensFile(GCAL_TOKENS_PATH);
-  const merged: Record<string, string> = { ...fromGtasksFile };
-
-  for (const key of GTASKS_ENV_KEYS) {
-    if (!merged[key] && fromGcalKeys[key]) {
-      merged[key] = fromGcalKeys[key];
-    }
-  }
-  if (!merged.GOOGLE_REFRESH_TOKEN && fromGcalRefresh) {
-    merged.GOOGLE_REFRESH_TOKEN = fromGcalRefresh;
-  }
-
-  for (const key of GTASKS_ENV_KEYS) {
-    if (!merged[key] && sdkEnv[key]) {
-      merged[key] = sdkEnv[key] as string;
-    }
-  }
-  return merged;
-}
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -528,25 +413,6 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
-  const gcalEnabled = isGcalMcpEnabled(containerInput);
-  if (gcalEnabled) {
-    if (!fs.existsSync(GCAL_CREDENTIALS_PATH)) {
-      log(`GCAL MCP enabled but credentials file missing: ${GCAL_CREDENTIALS_PATH}`);
-    } else {
-      log(`GCAL MCP enabled (credentials: ${GCAL_CREDENTIALS_PATH})`);
-    }
-  }
-  const gtasksEnabled = isGtasksMcpEnabled(containerInput);
-  const gtasksEnv = gtasksEnabled ? buildGtasksEnv(sdkEnv) : {};
-  if (gtasksEnabled) {
-    const missing = GTASKS_ENV_KEYS.filter((key) => !gtasksEnv[key]);
-    if (missing.length > 0) {
-      log(`Google Tasks MCP enabled but missing env: ${missing.join(', ')}`);
-    } else {
-      log(`Google Tasks MCP enabled (package: ${GTASKS_MCP_PACKAGE})`);
-    }
-  }
-
   const allowedTools = [
     'Bash',
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
@@ -556,14 +422,17 @@ async function runQuery(
     'TodoWrite', 'ToolSearch', 'Skill',
     'NotebookEdit',
     'mcp__nanoclaw__*',
-    ...(gcalEnabled ? ['mcp__google-calendar__*'] : []),
-    ...(gtasksEnabled ? ['mcp__google-tasks__*'] : []),
+    ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__open-brain__*'] : []),
   ];
 
   const mcpServers: Record<string, {
     command: string;
     args: string[];
     env?: Record<string, string>;
+  } | {
+    type: 'http';
+    url: string;
+    headers?: Record<string, string>;
   }> = {
     nanoclaw: {
       command: 'node',
@@ -574,25 +443,16 @@ async function runQuery(
         NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
       },
     },
-  };
-
-  if (gcalEnabled) {
-    mcpServers['google-calendar'] = {
-      command: 'npx',
-      args: ['-y', '@cocal/google-calendar-mcp'],
-      env: {
-        GOOGLE_OAUTH_CREDENTIALS: GCAL_CREDENTIALS_PATH,
-        GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.gcal-mcp/tokens.json',
+    ...(sdkEnv['OPEN_BRAIN_KEY'] ? {
+      'open-brain': {
+        type: 'http' as const,
+        url: 'https://gxsiizkwvtnpngorylnt.supabase.co/functions/v1/open-brain-mcp',
+        headers: {
+          'x-brain-key': sdkEnv['OPEN_BRAIN_KEY'] as string,
+        },
       },
-    };
-  }
-  if (gtasksEnabled) {
-    mcpServers['google-tasks'] = {
-      command: 'npx',
-      args: ['-y', GTASKS_MCP_PACKAGE],
-      env: gtasksEnv,
-    };
-  }
+    } : {}),
+  };
 
   for await (const message of query({
     prompt: stream,

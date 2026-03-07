@@ -121,7 +121,6 @@ describe('container-runner timeout behavior', () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    delete process.env.GTASKS_MCP_ENABLED;
   });
 
   it('timeout after output resolves as success', async () => {
@@ -211,31 +210,9 @@ describe('container-runner timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 
-  it('forwards GTASKS_MCP_ENABLED to docker args', async () => {
-    process.env.GTASKS_MCP_ENABLED = '1';
-
-    const resultPromise = runContainerAgent(
-      testGroup,
-      testInput,
-      () => {},
-      async () => {},
-    );
-
-    const mockedSpawn = vi.mocked(spawn);
-    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
-    expect(spawnArgs).toContain('-e');
-    expect(spawnArgs).toContain('GTASKS_MCP_ENABLED=1');
-
-    fakeProc.emit('close', 0);
-    await vi.advanceTimersByTimeAsync(10);
-    await resultPromise;
-  });
-
-  it('passes Google Tasks secrets from .env via stdin input', async () => {
+  it('passes allowed secrets from .env via stdin input', async () => {
     vi.mocked(readEnvFile).mockReturnValue({
-      GOOGLE_CLIENT_ID: 'test-client-id',
-      GOOGLE_CLIENT_SECRET: 'test-client-secret',
-      GOOGLE_REFRESH_TOKEN: 'test-refresh-token',
+      OPEN_BRAIN_KEY: 'brain-key',
     });
 
     let stdinPayload = '';
@@ -258,20 +235,16 @@ describe('container-runner timeout behavior', () => {
     expect(readEnvFile).toHaveBeenCalledWith([
       'CLAUDE_CODE_OAUTH_TOKEN',
       'ANTHROPIC_API_KEY',
-      'GOOGLE_CLIENT_ID',
-      'GOOGLE_CLIENT_SECRET',
-      'GOOGLE_REFRESH_TOKEN',
+      'OPEN_BRAIN_KEY',
     ]);
-    expect(parsed.secrets.GOOGLE_CLIENT_ID).toBe('test-client-id');
-    expect(parsed.secrets.GOOGLE_CLIENT_SECRET).toBe('test-client-secret');
-    expect(parsed.secrets.GOOGLE_REFRESH_TOKEN).toBe('test-refresh-token');
+    expect(parsed.secrets.OPEN_BRAIN_KEY).toBe('brain-key');
   });
 
-  it('mounts ~/.gtasks-mcp into main group containers when present', async () => {
+  it('mounts ~/.config/gws into main group containers when present', async () => {
     const home = process.env.HOME || '/tmp';
-    const gtasksDir = `${home}/.gtasks-mcp`;
+    const gwsConfigDir = `${home}/.config/gws`;
     vi.mocked(fs.existsSync).mockImplementation(
-      (p) => p === gtasksDir,
+      (p) => p === gwsConfigDir,
     );
 
     const resultPromise = runContainerAgent(
@@ -284,8 +257,9 @@ describe('container-runner timeout behavior', () => {
     const mockedSpawn = vi.mocked(spawn);
     const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
     expect(
-      spawnArgs.some((a) => a.includes(`${gtasksDir}:/home/node/.gtasks-mcp`)),
+      spawnArgs.some((a) => a.includes(`${gwsConfigDir}:/home/node/.config/gws`)),
     ).toBe(true);
+    expect(spawnArgs).toContain('GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/home/node/.config/gws');
 
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
