@@ -57,6 +57,10 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+const OBSIDIAN_VAULT_DIR = 'obsidian-vault';
+const OBSIDIAN_CONTAINER_PATH = '/workspace/extra/obsidian';
+const GWS_CONTAINER_PATH = '/workspace/gws';
+
 function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
   fs.mkdirSync(dstDir, { recursive: true });
   for (const entry of fs.readdirSync(srcDir)) {
@@ -68,6 +72,13 @@ function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
       fs.copyFileSync(srcPath, dstPath);
     }
   }
+}
+
+function hasMountForContainerPath(
+  mounts: VolumeMount[],
+  containerPath: string,
+): boolean {
+  return mounts.some((mount) => mount.containerPath === containerPath);
 }
 
 function buildVolumeMounts(
@@ -157,15 +168,26 @@ function buildVolumeMounts(
 
   // Main group only: optional Google Workspace CLI auth state.
   // Mounted from host so OAuth state persists across container runs.
+  // Keep it out of /home/node/.config: bind-mounting there causes Chromium
+  // to crash on startup, which breaks agent-browser.
   if (isMain) {
     const gwsConfigDir = path.join(homeDir, '.config', 'gws');
     if (fs.existsSync(gwsConfigDir)) {
       mounts.push({
         hostPath: gwsConfigDir,
-        containerPath: '/home/node/.config/gws',
+        containerPath: GWS_CONTAINER_PATH,
         readonly: false,
       });
     }
+  }
+
+  const obsidianVaultDir = path.join(homeDir, OBSIDIAN_VAULT_DIR);
+  if (fs.existsSync(obsidianVaultDir)) {
+    mounts.push({
+      hostPath: obsidianVaultDir,
+      containerPath: OBSIDIAN_CONTAINER_PATH,
+      readonly: false,
+    });
   }
 
   // Per-group IPC namespace: each group gets its own IPC directory
@@ -196,7 +218,12 @@ function buildVolumeMounts(
       group.name,
       isMain,
     );
-    mounts.push(...validatedMounts);
+    for (const mount of validatedMounts) {
+      if (hasMountForContainerPath(mounts, mount.containerPath)) {
+        continue;
+      }
+      mounts.push(mount);
+    }
   }
 
   return mounts;
@@ -224,9 +251,9 @@ function buildContainerArgs(
   if (isMain) {
     args.push(
       '-e',
-      'GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/home/node/.config/gws',
+      `GOOGLE_WORKSPACE_CLI_CONFIG_DIR=${GWS_CONTAINER_PATH}`,
       '-e',
-      'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/node/.config/gws/client_secret.json',
+      `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${GWS_CONTAINER_PATH}/credentials.json`,
     );
   }
 

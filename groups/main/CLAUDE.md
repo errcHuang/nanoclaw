@@ -75,9 +75,10 @@ Key paths inside the container:
 
 ## Obsidian Vault
 
-Your personal Obsidian vault may be mounted at `/workspace/extra/obsidian`.
+Inside NanoClaw containers, your personal Obsidian vault is mounted at `/workspace/extra/obsidian` when `~/obsidian-vault` exists on the host.
+In the local Codex workspace, the same vault may instead be available directly at `/home/nanoclaw/obsidian-vault`.
 
-When this path exists:
+When either path exists:
 - Prefer saving durable user knowledge there as Markdown files.
 - Use wiki links (`[[Note Name]]`) when linking related notes.
 - Use a single-folder model for durable notes: store purpose-built files in `references/`.
@@ -90,14 +91,18 @@ When this path exists:
 - For "remember this" style requests, store concise facts that are likely useful later.
 - Skip trivial chatter that has no future retrieval value.
 
+Preferred vault root:
+- Use `/workspace/extra/obsidian` when present.
+- Otherwise use `/home/nanoclaw/obsidian-vault`.
+
 ### Personal Data
-- **Contacts CRM**: Personal relationship tracking data is stored at `/workspace/extra/obsidian/references/contacts.md`
-- **Home Inventory**: Item tracking for packing/storage at `/workspace/extra/obsidian/references/home-inventory.md`
+- **Contacts CRM**: Personal relationship tracking data is stored at `references/contacts.md` under the active Obsidian vault root
+- **Home Inventory**: Item tracking for packing/storage at `references/home-inventory.md` under the active Obsidian vault root
 
 ### Read/Write Routing
-- Contact outreach, relationship updates, and people tracking: read/write `/workspace/extra/obsidian/references/contacts.md`
-- Item location, packing, and storage updates: read/write `/workspace/extra/obsidian/references/home-inventory.md`
-- Other durable knowledge: create or update a purpose-named file under `/workspace/extra/obsidian/references/`
+- Contact outreach, relationship updates, and people tracking: read/write `references/contacts.md` under the active Obsidian vault root
+- Item location, packing, and storage updates: read/write `references/home-inventory.md` under the active Obsidian vault root
+- Other durable knowledge: create or update a purpose-named file under `references/` in the active Obsidian vault root
 
 ### Storage & Packing Principles
 When helping with storage, organization, or packing:
@@ -120,7 +125,23 @@ Use it to:
 
 Types: `observation`, `task`, `idea`, `reference`, `person_note`
 
-Proactively capture important things the user mentions (decisions, people notes, ideas) without being asked, unless they're clearly ephemeral.
+### Proactive Capture Guidelines
+
+**Automatically capture** (without asking):
+- Important decisions or commitments
+- Facts about people, relationships, or preferences
+- Ideas or insights worth remembering
+- Project plans or strategy discussions
+- Personal goals or values expressed
+- Important context that would be valuable in future conversations
+
+**Don't capture**:
+- Ephemeral chat or small talk
+- Information already well-documented elsewhere
+- Purely transactional exchanges
+- Trivial preferences that won't matter later
+
+When you capture something proactively, do it naturally during the conversation. You can briefly mention it ("_Captured that to your brain_") or just do it silently if the flow works better.
 
 ---
 
@@ -170,6 +191,18 @@ Safety rules:
 - For Gmail actions, confirm recipient, subject, and any irreversible mailbox changes.
 - Prefer `--dry-run` when a helper or raw command supports it.
 - If a request is ambiguous, ask a clarifying question before acting.
+
+### Email Triage
+
+**IMPORTANT:** Before running the scheduled email triage task, **ALWAYS read** `/workspace/extra/obsidian/references/email-triage-guidelines.md` for the complete prioritization framework and context-aware rules.
+
+The guidelines document contains:
+- Detailed priority level definitions (HIGH, MEDIUM, LOW)
+- Context-aware prioritization rules (travel, financial, job search)
+- Output format specifications
+- Pre-triage checklist
+
+This ensures consistent email classification across all scheduled runs.
 
 ---
 

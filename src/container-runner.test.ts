@@ -4,6 +4,7 @@ import { PassThrough } from 'stream';
 import fs from 'fs';
 import { spawn } from 'child_process';
 import { readEnvFile } from './env.js';
+import { validateAdditionalMounts } from './mount-security.js';
 
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -257,9 +258,82 @@ describe('container-runner timeout behavior', () => {
     const mockedSpawn = vi.mocked(spawn);
     const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
     expect(
-      spawnArgs.some((a) => a.includes(`${gwsConfigDir}:/home/node/.config/gws`)),
+      spawnArgs.some((a) => a.includes(`${gwsConfigDir}:/workspace/gws`)),
     ).toBe(true);
-    expect(spawnArgs).toContain('GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/home/node/.config/gws');
+    expect(spawnArgs).toContain('GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/workspace/gws');
+    expect(spawnArgs).toContain(
+      'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/workspace/gws/credentials.json',
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('mounts ~/obsidian-vault into every container when present', async () => {
+    const home = process.env.HOME || '/tmp';
+    const obsidianVaultDir = `${home}/obsidian-vault`;
+    vi.mocked(fs.existsSync).mockImplementation(
+      (p) => p === obsidianVaultDir,
+    );
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    const mockedSpawn = vi.mocked(spawn);
+    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
+    expect(
+      spawnArgs.some((a) => a.includes(`${obsidianVaultDir}:/workspace/extra/obsidian`)),
+    ).toBe(true);
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('skips duplicate obsidian mounts when a group already mounts /workspace/extra/obsidian', async () => {
+    const home = process.env.HOME || '/tmp';
+    const obsidianVaultDir = `${home}/obsidian-vault`;
+    vi.mocked(fs.existsSync).mockImplementation(
+      (p) => p === obsidianVaultDir,
+    );
+    vi.mocked(validateAdditionalMounts).mockReturnValue([
+      {
+        hostPath: '/custom/obsidian',
+        containerPath: '/workspace/extra/obsidian',
+        readonly: false,
+      },
+    ]);
+
+    const resultPromise = runContainerAgent(
+      {
+        ...testGroup,
+        containerConfig: {
+          additionalMounts: [
+            {
+              hostPath: '~/obsidian-vault',
+              containerPath: 'obsidian',
+              readonly: false,
+            },
+          ],
+        },
+      },
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    const mockedSpawn = vi.mocked(spawn);
+    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
+    const obsidianMountArgs = spawnArgs.filter((arg) =>
+      arg.includes(':/workspace/extra/obsidian'),
+    );
+    expect(obsidianMountArgs).toHaveLength(1);
+    expect(obsidianMountArgs[0]).toContain(`${obsidianVaultDir}:/workspace/extra/obsidian`);
 
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);

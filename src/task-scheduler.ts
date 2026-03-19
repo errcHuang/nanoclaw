@@ -30,6 +30,8 @@ export interface SchedulerDependencies {
   sendMessage: (jid: string, text: string) => Promise<void>;
 }
 
+const inFlightTaskIds = new Set<string>();
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
@@ -83,6 +85,7 @@ async function runTask(
 
   let result: string | null = null;
   let error: string | null = null;
+  let lastDeliveredResult: string | null = null;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -116,8 +119,17 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          if (streamedOutput.result !== lastDeliveredResult) {
+            // Forward the latest agent result to the user. Duplicate
+            // consecutive result markers can happen during resume flows.
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+            lastDeliveredResult = streamedOutput.result;
+          } else {
+            logger.debug(
+              { taskId: task.id },
+              'Skipping duplicate scheduled task output',
+            );
+          }
           // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
         }
@@ -195,17 +207,33 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       }
 
       for (const task of dueTasks) {
+        if (inFlightTaskIds.has(task.id)) {
+          continue;
+        }
+
         // Re-check task status in case it was paused/cancelled
         const currentTask = getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
         }
 
-        deps.queue.enqueueTask(
-          currentTask.chat_jid,
-          currentTask.id,
-          () => runTask(currentTask, deps),
-        );
+        try {
+          inFlightTaskIds.add(currentTask.id);
+          deps.queue.enqueueTask(
+            currentTask.chat_jid,
+            currentTask.id,
+            async () => {
+              try {
+                await runTask(currentTask, deps);
+              } finally {
+                inFlightTaskIds.delete(currentTask.id);
+              }
+            },
+          );
+        } catch (err) {
+          inFlightTaskIds.delete(currentTask.id);
+          throw err;
+        }
       }
     } catch (err) {
       logger.error({ err }, 'Error in scheduler loop');
