@@ -423,6 +423,7 @@ async function runQuery(
     'NotebookEdit',
     'mcp__nanoclaw__*',
     ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__open-brain__*'] : []),
+    ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__household-knowledge__*'] : []),
   ];
 
   const mcpServers: Record<string, {
@@ -450,6 +451,10 @@ async function runQuery(
         headers: {
           'x-brain-key': sdkEnv['OPEN_BRAIN_KEY'] as string,
         },
+      },
+      'household-knowledge': {
+        type: 'http' as const,
+        url: `https://gxsiizkwvtnpngorylnt.supabase.co/functions/v1/household-knowledge-mcp?key=${encodeURIComponent(sdkEnv['OPEN_BRAIN_KEY'] as string)}`,
       },
     } : {}),
   };
