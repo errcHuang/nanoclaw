@@ -424,6 +424,7 @@ async function runQuery(
     'mcp__nanoclaw__*',
     ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__open-brain__*'] : []),
     ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__household-knowledge__*'] : []),
+    ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__professional-crm__*'] : []),
   ];
 
   const mcpServers: Record<string, {
@@ -455,6 +456,10 @@ async function runQuery(
       'household-knowledge': {
         type: 'http' as const,
         url: `https://gxsiizkwvtnpngorylnt.supabase.co/functions/v1/household-knowledge-mcp?key=${encodeURIComponent(sdkEnv['OPEN_BRAIN_KEY'] as string)}`,
+      },
+      'professional-crm': {
+        type: 'http' as const,
+        url: `https://gxsiizkwvtnpngorylnt.supabase.co/functions/v1/professional-crm-mcp?key=${encodeURIComponent(sdkEnv['OPEN_BRAIN_KEY'] as string)}`,
       },
     } : {}),
   };
