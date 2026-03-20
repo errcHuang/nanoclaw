@@ -9,8 +9,14 @@ import {
   MAIN_GROUP_FOLDER,
   TIMEZONE,
 } from './config.js';
-import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { AvailableGroup, writeTasksSnapshot } from './container-runner.js';
+import {
+  createTask,
+  deleteTask,
+  getAllTasks,
+  getTaskById,
+  updateTask,
+} from './db.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -29,6 +35,32 @@ export interface IpcDeps {
 }
 
 let ipcWatcherRunning = false;
+
+function refreshTaskSnapshots(deps: IpcDeps): void {
+  const tasks = getAllTasks();
+  const snapshot = tasks.map((task) => ({
+    id: task.id,
+    groupFolder: task.group_folder,
+    prompt: task.prompt,
+    schedule_type: task.schedule_type,
+    schedule_value: task.schedule_value,
+    status: task.status,
+    next_run: task.next_run,
+  }));
+
+  const groupFolders = new Set<string>([MAIN_GROUP_FOLDER]);
+  for (const group of Object.values(deps.registeredGroups())) {
+    groupFolders.add(group.folder);
+  }
+
+  for (const groupFolder of groupFolders) {
+    writeTasksSnapshot(
+      groupFolder,
+      groupFolder === MAIN_GROUP_FOLDER,
+      snapshot,
+    );
+  }
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -266,6 +298,7 @@ export async function processTaskIpc(
           { taskId, sourceGroup, targetFolder, contextMode },
           'Task created via IPC',
         );
+        refreshTaskSnapshots(deps);
       }
       break;
 
@@ -278,6 +311,7 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task paused via IPC',
           );
+          refreshTaskSnapshots(deps);
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
@@ -296,6 +330,7 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task resumed via IPC',
           );
+          refreshTaskSnapshots(deps);
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
@@ -314,6 +349,7 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task cancelled via IPC',
           );
+          refreshTaskSnapshots(deps);
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },

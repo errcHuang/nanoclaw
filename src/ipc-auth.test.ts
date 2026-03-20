@@ -1,4 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { mockWriteTasksSnapshot } = vi.hoisted(() => ({
+  mockWriteTasksSnapshot: vi.fn(),
+}));
+
+vi.mock('./container-runner.js', () => ({
+  writeTasksSnapshot: mockWriteTasksSnapshot,
+}));
 
 import {
   _initTestDatabase,
@@ -38,6 +46,7 @@ let deps: IpcDeps;
 
 beforeEach(() => {
   _initTestDatabase();
+  vi.clearAllMocks();
 
   groups = {
     'main@g.us': MAIN_GROUP,
@@ -140,6 +149,44 @@ describe('schedule_task authorization', () => {
 
     const allTasks = getAllTasks();
     expect(allTasks.length).toBe(0);
+  });
+
+  it('refreshes task snapshots after scheduling', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'self task',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        targetJid: 'other@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledTimes(3);
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledWith(
+      'main',
+      true,
+      expect.arrayContaining([
+        expect.objectContaining({
+          groupFolder: 'other-group',
+          prompt: 'self task',
+          status: 'active',
+        }),
+      ]),
+    );
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledWith(
+      'other-group',
+      false,
+      expect.any(Array),
+    );
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledWith(
+      'third-group',
+      false,
+      expect.any(Array),
+    );
   });
 });
 
@@ -278,6 +325,41 @@ describe('cancel_task authorization', () => {
 
     await processTaskIpc({ type: 'cancel_task', taskId: 'task-foreign' }, 'other-group', false, deps);
     expect(getTaskById('task-foreign')).toBeDefined();
+  });
+
+  it('refreshes task snapshots after cancellation', async () => {
+    createTask({
+      id: 'task-to-remove',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'remove me',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      { type: 'cancel_task', taskId: 'task-to-remove' },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledTimes(3);
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledWith('main', true, []);
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledWith(
+      'other-group',
+      false,
+      [],
+    );
+    expect(mockWriteTasksSnapshot).toHaveBeenCalledWith(
+      'third-group',
+      false,
+      [],
+    );
   });
 });
 
