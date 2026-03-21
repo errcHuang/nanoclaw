@@ -95,14 +95,14 @@ Preferred vault root:
 - Use `/workspace/extra/obsidian` when present.
 - Otherwise use `/home/nanoclaw/obsidian-vault`.
 
-### Personal Data
-- **Contacts CRM**: Personal relationship tracking data is stored at `references/contacts.md` under the active Obsidian vault root
-- **Home Inventory**: Item tracking for packing/storage at `references/home-inventory.md` under the active Obsidian vault root
+### Personal Data & MCP Tool Routing
 
-### Read/Write Routing
-- Contact outreach, relationship updates, and people tracking: read/write `references/contacts.md` under the active Obsidian vault root
-- Item location, packing, and storage updates: read/write `references/home-inventory.md` under the active Obsidian vault root
-- Other durable knowledge: create or update a purpose-named file under `references/` in the active Obsidian vault root
+**IMPORTANT: Always use MCP tools for structured data:**
+- **Personal contacts, relationship tracking, outreach reminders**: Use `mcp__professional-crm__*` tools (search_contacts, add_professional_contact, log_interaction, get_follow_ups_due, update_contact, etc.)
+- **Household items, inventory, item locations**: Use `mcp__household-knowledge__*` tools (search_household_items, add_household_item, update_household_item, get_item_details, add_vendor, list_vendors)
+
+**Other durable knowledge:**
+- Create or update purpose-named files under `references/` in the active Obsidian vault root
 
 ### Storage & Packing Principles
 When helping with storage, organization, or packing:
