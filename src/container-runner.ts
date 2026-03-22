@@ -238,6 +238,7 @@ function readSecrets(): Record<string, string> {
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     'OPEN_BRAIN_KEY',
+    'GOOGLE_MAPS_API_KEY',
   ]);
 }
 

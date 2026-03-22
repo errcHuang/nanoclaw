@@ -62,8 +62,9 @@ Messages and task operations are verified against group identity:
 
 ### 5. Credential Handling
 
-**Mounted Credentials:**
-- Claude auth tokens (filtered from `.env`, read-only)
+**Container-Exposed Credentials:**
+- Claude auth tokens (filtered from `.env`, passed only to the SDK runtime)
+- Allowlisted MCP API keys (filtered from `.env`, passed only to the SDK runtime)
 
 **NOT Mounted:**
 - WhatsApp session (`store/auth/`) - host only
@@ -73,10 +74,15 @@ Messages and task operations are verified against group identity:
 **Credential Filtering:**
 Only these environment variables are exposed to containers:
 ```typescript
-const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+const allowedVars = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'OPEN_BRAIN_KEY',
+  'GOOGLE_MAPS_API_KEY',
+];
 ```
 
-> **Note:** Anthropic credentials are mounted so that Claude Code can authenticate when the agent runs. However, this means the agent itself can discover these credentials via Bash or file operations. Ideally, Claude Code would authenticate without exposing credentials to the agent's execution environment, but I couldn't figure this out. **PRs welcome** if you have ideas for credential isolation.
+> **Note:** Anthropic credentials are passed into the Claude SDK runtime so the agent can authenticate. That still means the agent may be able to discover them unless they are explicitly scrubbed from tool subprocesses. NanoClaw currently unsets the allowlisted secret env vars before Bash tool execution, but improving credential isolation further would still be valuable.
 
 ## Privilege Comparison
 

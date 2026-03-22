@@ -187,7 +187,12 @@ function createPreCompactHook(): HookCallback {
 // Secrets to strip from Bash tool subprocess environments.
 // These are needed by claude-code for API auth but should never
 // be visible to commands Kit runs.
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+const SECRET_ENV_VARS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPEN_BRAIN_KEY',
+  'GOOGLE_MAPS_API_KEY',
+];
 
 function createSanitizeBashHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -426,6 +431,7 @@ async function runQuery(
     ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__household-knowledge__*'] : []),
     ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__meal-planning__*'] : []),
     ...(sdkEnv['OPEN_BRAIN_KEY'] ? ['mcp__professional-crm__*'] : []),
+    ...(sdkEnv['GOOGLE_MAPS_API_KEY'] ? ['mcp__maps-grounding-lite-mcp__*'] : []),
   ];
 
   const mcpServers: Record<string, {
@@ -465,6 +471,15 @@ async function runQuery(
       'professional-crm': {
         type: 'http' as const,
         url: `https://gxsiizkwvtnpngorylnt.supabase.co/functions/v1/professional-crm-mcp?key=${encodeURIComponent(sdkEnv['OPEN_BRAIN_KEY'] as string)}`,
+      },
+    } : {}),
+    ...(sdkEnv['GOOGLE_MAPS_API_KEY'] ? {
+      'maps-grounding-lite-mcp': {
+        type: 'http' as const,
+        url: 'https://mapstools.googleapis.com/mcp',
+        headers: {
+          'X-Goog-Api-Key': sdkEnv['GOOGLE_MAPS_API_KEY'] as string,
+        },
       },
     } : {}),
   };

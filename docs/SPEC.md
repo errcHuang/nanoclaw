@@ -240,7 +240,12 @@ The token can be extracted from `~/.claude/.credentials.json` if you're logged i
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-Only the authentication variables (`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`) are extracted from `.env` and passed to the container via stdin. This ensures other environment variables in `.env` are not exposed to the agent.
+Optional MCP secrets can also live in the same project-root `.env` file. For Google Maps grounding:
+```bash
+GOOGLE_MAPS_API_KEY=AIza...
+```
+
+NanoClaw extracts only the allowlisted secrets from `.env` and passes them to the container via stdin: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `OPEN_BRAIN_KEY`, and `GOOGLE_MAPS_API_KEY`. This keeps unrelated `.env` values out of the agent runtime.
 
 ### Changing the Assistant Name
 
@@ -494,9 +499,12 @@ When NanoClaw starts, it:
    - Recovers any unprocessed messages from before shutdown
    - Starts the message polling loop
 
-### Service: com.nanoclaw
+### Service: nanoclaw.service
 
-**launchd/com.nanoclaw.plist:**
+This installation runs as a user-level systemd service named `nanoclaw.service`.
+The repo still includes a macOS launchd plist as a reference:
+
+**launchd/com.nanoclaw.plist (macOS reference):**
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
@@ -535,17 +543,23 @@ When NanoClaw starts, it:
 ### Managing the Service
 
 ```bash
-# Install service
-cp launchd/com.nanoclaw.plist ~/Library/LaunchAgents/
+# Reload user units after editing the service file
+systemctl --user daemon-reload
 
 # Start service
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+systemctl --user start nanoclaw.service
+
+# Enable on login
+systemctl --user enable nanoclaw.service
+
+# Restart service
+systemctl --user restart nanoclaw.service
 
 # Stop service
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+systemctl --user stop nanoclaw.service
 
 # Check status
-launchctl list | grep nanoclaw
+systemctl --user status nanoclaw.service
 
 # View logs
 tail -f logs/nanoclaw.log
@@ -604,7 +618,7 @@ chmod 700 groups/
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| No response to messages | Service not running | Check `launchctl list | grep nanoclaw` |
+| No response to messages | Service not running | Check `systemctl --user status nanoclaw.service` |
 | "Claude Code process exited with code 1" | Docker not running | Start Docker: `sudo systemctl start docker` (Linux) or open Docker Desktop (macOS) |
 | "Claude Code process exited with code 1" | Session mount path wrong | Ensure mount is to `/home/node/.claude/` not `/root/.claude/` |
 | Session not continuing | Session ID not saved | Check SQLite: `sqlite3 store/messages.db "SELECT * FROM sessions"` |

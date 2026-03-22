@@ -100,6 +100,7 @@ Preferred vault root:
 **IMPORTANT: Always use MCP tools for structured data:**
 - **Personal contacts, relationship tracking, outreach reminders**: Use `mcp__professional-crm__*` tools (search_contacts, add_professional_contact, log_interaction, get_follow_ups_due, update_contact, etc.)
 - **Household items, inventory, item locations**: Use `mcp__household-knowledge__*` tools (search_household_items, add_household_item, update_household_item, get_item_details, add_vendor, list_vendors)
+- **Recipes, meal planning, cooking**: Use `mcp__meal-planning__*` tools (add_recipe, search_recipes, update_recipe, create_meal_plan, get_meal_plan, generate_shopping_list)
 
 **Other durable knowledge:**
 - Create or update purpose-named files under `references/` in the active Obsidian vault root

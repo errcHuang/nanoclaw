@@ -214,6 +214,7 @@ describe('container-runner timeout behavior', () => {
   it('passes allowed secrets from .env via stdin input', async () => {
     vi.mocked(readEnvFile).mockReturnValue({
       OPEN_BRAIN_KEY: 'brain-key',
+      GOOGLE_MAPS_API_KEY: 'maps-key',
     });
 
     let stdinPayload = '';
@@ -237,8 +238,10 @@ describe('container-runner timeout behavior', () => {
       'CLAUDE_CODE_OAUTH_TOKEN',
       'ANTHROPIC_API_KEY',
       'OPEN_BRAIN_KEY',
+      'GOOGLE_MAPS_API_KEY',
     ]);
     expect(parsed.secrets.OPEN_BRAIN_KEY).toBe('brain-key');
+    expect(parsed.secrets.GOOGLE_MAPS_API_KEY).toBe('maps-key');
   });
 
   it('mounts ~/.config/gws into main group containers when present', async () => {
