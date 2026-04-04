@@ -66,15 +66,10 @@ server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
 
-CONTEXT MODE - Choose based on task type:
-\u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
-\u2022 "isolated": Task runs in a fresh session with no conversation history. Use for independent tasks that don't need prior context. When using isolated mode, include all necessary context in the prompt itself.
-
-If unsure which mode to use, you can ask the user. Examples:
-- "Remind me about our discussion" \u2192 group (needs conversation context)
-- "Check the weather every morning" \u2192 isolated (self-contained task)
-- "Follow up on my request" \u2192 group (needs to know what was requested)
-- "Generate a daily report" \u2192 isolated (just needs instructions in prompt)
+CONTEXT MODE - Choose based on how much conversation state the task needs:
+\u2022 "isolated": Fresh session, no conversation history. Best default for most tasks. Include all necessary context directly in the prompt.
+\u2022 "snapshot": Fresh session, but NanoClaw copies a bounded snapshot of recent non-bot chat context into the task prompt when you schedule it. Use this for "follow up on what we just discussed" style tasks without paying for full session reuse later.
+\u2022 "group": Reuses the group's live Claude session when the task runs. Use only as an escape hatch when the task truly needs the full ongoing conversation state at execution time.
 
 MESSAGING BEHAVIOR - The task agent's final non-internal output is sent to the user or group automatically. It can also use send_message for progress updates or extra messages, or wrap output in <internal> tags to suppress the final auto-send. Include guidance in the prompt about whether the agent should:
 \u2022 Always send a message (e.g., reminders, daily briefings)
@@ -89,7 +84,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
-    context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
+    context_mode: z.enum(['group', 'isolated', 'snapshot']).default('isolated').describe('isolated=fresh session, snapshot=fresh session plus bounded recent chat snapshot captured now, group=reuses the group session at run time'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
   },
   async (args) => {
@@ -129,7 +124,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       prompt: args.prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
-      context_mode: args.context_mode || 'group',
+      context_mode: args.context_mode || 'isolated',
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),

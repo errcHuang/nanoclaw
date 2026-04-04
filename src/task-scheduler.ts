@@ -87,7 +87,9 @@ async function runTask(
   let error: string | null = null;
   let lastDeliveredResult: string | null = null;
 
-  // For group context mode, use the group's current session
+  // Only explicit group-mode tasks resume the group's current conversation.
+  // snapshot-mode tasks embed recent chat context into the stored prompt and
+  // then run isolated at execution time.
   const sessions = deps.getSessions();
   const sessionId =
     task.context_mode === 'group' ? sessions[task.group_folder] : undefined;

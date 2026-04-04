@@ -8,6 +8,7 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  SESSION_CONTINUITY_WINDOW,
   TRIGGER_PATTERN,
 } from './config.js';
 import {
@@ -20,6 +21,7 @@ import { ContainerOutput, writeGroupsSnapshot } from './container-runner.js';
 import {
   getAllRegisteredGroups,
   getAllSessions,
+  deleteSession,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -28,6 +30,7 @@ import {
   setRouterState,
   storeChatMetadata,
   storeMessage,
+  storeMessageDirect,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
@@ -35,6 +38,11 @@ import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import {
+  applyClearCommand,
+  hasClearCommand,
+  isTimestampOutsideWindow,
+} from './session-policy.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -43,6 +51,7 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+const lastAgentCursorFloor: Record<string, string> = {};
 let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
@@ -71,6 +80,56 @@ function saveState(): void {
     'last_agent_timestamp',
     JSON.stringify(lastAgentTimestamp),
   );
+}
+
+function clampCursor(chatJid: string, timestamp: string): string {
+  const floor = lastAgentCursorFloor[chatJid];
+  if (!floor) return timestamp;
+  return timestamp < floor ? floor : timestamp;
+}
+
+function setLastAgentCursor(chatJid: string, timestamp: string): void {
+  lastAgentTimestamp[chatJid] = clampCursor(chatJid, timestamp);
+}
+
+function maybeClearCursorFloor(chatJid: string): void {
+  const floor = lastAgentCursorFloor[chatJid];
+  const cursor = lastAgentTimestamp[chatJid];
+  if (floor && cursor && cursor >= floor) {
+    delete lastAgentCursorFloor[chatJid];
+  }
+}
+
+function resetGroupSession(group: RegisteredGroup, reason: 'manual' | 'stale'): void {
+  delete sessions[group.folder];
+  deleteSession(group.folder);
+  logger.info({ group: group.name, reason }, 'Session reset');
+}
+
+function makeSyntheticFollowupMessage(
+  message: NewMessage,
+  content: string,
+): {
+  id: string;
+  chat_jid: string;
+  sender: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  is_from_me: boolean;
+  is_bot_message: boolean;
+} {
+  const timestamp = new Date(Date.parse(message.timestamp) + 1).toISOString();
+  return {
+    id: `${message.id}::clear-followup-db`,
+    chat_jid: message.chat_jid,
+    sender: message.sender,
+    sender_name: message.sender_name,
+    content,
+    timestamp,
+    is_from_me: !!message.is_from_me,
+    is_bot_message: false,
+  };
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -115,21 +174,51 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  const clearResolution = applyClearCommand(missedMessages);
+  const hasManualClear = clearResolution.clearRequested;
+
   // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
+  if (!isMainGroup && group.requiresTrigger !== false && !hasManualClear) {
     const hasTrigger = missedMessages.some((m) =>
       TRIGGER_PATTERN.test(m.content.trim()),
     );
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages);
-
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
+  let rollbackCursor = previousCursor;
+
+  let messagesForPrompt = missedMessages;
+  if (hasManualClear && clearResolution.clearTimestamp) {
+    lastAgentCursorFloor[chatJid] = clearResolution.clearTimestamp;
+    rollbackCursor = clearResolution.clearTimestamp;
+    resetGroupSession(group, 'manual');
+    messagesForPrompt = clearResolution.messages;
+
+    if (messagesForPrompt.length === 0) {
+      setLastAgentCursor(chatJid, clearResolution.clearTimestamp);
+      saveState();
+      maybeClearCursorFloor(chatJid);
+      await whatsapp.sendMessage(chatJid, 'Session cleared.');
+      return true;
+    }
+  } else if (
+    sessions[group.folder] &&
+    isTimestampOutsideWindow(
+      previousCursor,
+      SESSION_CONTINUITY_WINDOW,
+    )
+  ) {
+    resetGroupSession(group, 'stale');
+  }
+
+  const prompt = formatMessages(messagesForPrompt);
+  setLastAgentCursor(
+    chatJid,
+    messagesForPrompt[messagesForPrompt.length - 1].timestamp,
+  );
   saveState();
 
   logger.info(
@@ -182,12 +271,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
+    setLastAgentCursor(chatJid, rollbackCursor);
     saveState();
     logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
     return false;
   }
 
+  maybeClearCursorFloor(chatJid);
   return true;
 }
 
@@ -247,11 +337,12 @@ async function startMessageLoop(): Promise<void> {
 
           const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+          const hasClear = hasClearCommand(groupMessages);
 
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
-          if (needsTrigger) {
+          if (needsTrigger && !hasClear) {
             const hasTrigger = groupMessages.some((m) =>
               TRIGGER_PATTERN.test(m.content.trim()),
             );
@@ -267,6 +358,44 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+          const clearResolution = applyClearCommand(messagesToSend);
+
+          if (clearResolution.clearRequested && queue.isActive(chatJid)) {
+            let clearMessage: NewMessage | undefined;
+            for (let i = messagesToSend.length - 1; i >= 0; i--) {
+              const message = messagesToSend[i];
+              if (
+                message.timestamp === clearResolution.clearTimestamp &&
+                message.content.trim().toLowerCase().startsWith('/clear')
+              ) {
+                clearMessage = message;
+                break;
+              }
+            }
+            if (clearMessage && clearResolution.messages[0]?.id.endsWith('clear-followup')) {
+              storeMessageDirect(
+                makeSyntheticFollowupMessage(
+                  clearMessage,
+                  clearResolution.messages[0].content,
+                ),
+              );
+            }
+
+            lastAgentCursorFloor[chatJid] = clearResolution.clearTimestamp!;
+            setLastAgentCursor(chatJid, clearResolution.clearTimestamp!);
+            saveState();
+            resetGroupSession(group, 'manual');
+            queue.abortGroup(chatJid);
+
+            if (clearResolution.messages.length === 0) {
+              await whatsapp.sendMessage(chatJid, 'Session cleared.');
+              await whatsapp.setTyping(chatJid, false);
+            } else {
+              queue.enqueueMessageCheck(chatJid);
+            }
+            continue;
+          }
+
           const formatted = formatMessages(messagesToSend);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -274,8 +403,10 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
+            setLastAgentCursor(
+              chatJid,
+              messagesToSend[messagesToSend.length - 1].timestamp,
+            );
             saveState();
             // Show typing indicator while the container processes the piped message
             whatsapp.setTyping(chatJid, true);

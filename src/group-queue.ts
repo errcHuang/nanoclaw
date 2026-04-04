@@ -157,6 +157,23 @@ export class GroupQueue {
     }
   }
 
+  isActive(groupJid: string): boolean {
+    return this.getGroup(groupJid).active;
+  }
+
+  abortGroup(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active) return false;
+    try {
+      if (state.process && !state.process.killed) {
+        state.process.kill('SIGTERM');
+      }
+    } catch {
+      // ignore
+    }
+    return true;
+  }
+
   private async runForGroup(
     groupJid: string,
     reason: 'messages' | 'drain',

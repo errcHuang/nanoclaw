@@ -175,4 +175,129 @@ describe('task-scheduler', () => {
       'Daily summary',
     );
   });
+
+  it('runs isolated tasks without resuming a group session', async () => {
+    const isolatedTask = { ...baseTask, context_mode: 'isolated' as const };
+    mockGetDueTasks.mockReturnValueOnce([isolatedTask]).mockReturnValue([]);
+    mockGetTaskById.mockReturnValueOnce(isolatedTask);
+
+    const queuedFns: Array<() => Promise<void>> = [];
+    const queue = {
+      enqueueTask: vi.fn(
+        (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+          queuedFns.push(fn);
+        },
+      ),
+      closeStdin: vi.fn(),
+    };
+
+    const { startSchedulerLoop } = await import('./task-scheduler.js');
+    startSchedulerLoop({
+      registeredGroups: () => ({ [baseTask.chat_jid]: group }),
+      getSessions: () => ({ [baseTask.group_folder]: 'session-123' }),
+      queue: queue as any,
+      onProcess: () => {},
+      sendMessage: vi.fn(async () => {}),
+    });
+
+    expect(queuedFns).toHaveLength(1);
+
+    await queuedFns[0]();
+
+    expect(mockRunContainerAgent).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: baseTask.prompt,
+        sessionId: undefined,
+        groupFolder: baseTask.group_folder,
+        chatJid: baseTask.chat_jid,
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
+
+  it('runs snapshot tasks without resuming a group session', async () => {
+    const snapshotTask = {
+      ...baseTask,
+      context_mode: 'snapshot' as const,
+      prompt: 'snapshot prompt',
+    };
+    mockGetDueTasks.mockReturnValueOnce([snapshotTask]).mockReturnValue([]);
+    mockGetTaskById.mockReturnValueOnce(snapshotTask);
+
+    const queuedFns: Array<() => Promise<void>> = [];
+    const queue = {
+      enqueueTask: vi.fn(
+        (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+          queuedFns.push(fn);
+        },
+      ),
+      closeStdin: vi.fn(),
+    };
+
+    const { startSchedulerLoop } = await import('./task-scheduler.js');
+    startSchedulerLoop({
+      registeredGroups: () => ({ [baseTask.chat_jid]: group }),
+      getSessions: () => ({ [baseTask.group_folder]: 'session-123' }),
+      queue: queue as any,
+      onProcess: () => {},
+      sendMessage: vi.fn(async () => {}),
+    });
+
+    expect(queuedFns).toHaveLength(1);
+
+    await queuedFns[0]();
+
+    expect(mockRunContainerAgent).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: 'snapshot prompt',
+        sessionId: undefined,
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
+
+  it('runs explicit group-mode tasks with the saved group session', async () => {
+    const groupTask = { ...baseTask, context_mode: 'group' as const };
+    mockGetDueTasks.mockReturnValueOnce([groupTask]).mockReturnValue([]);
+    mockGetTaskById.mockReturnValueOnce(groupTask);
+
+    const queuedFns: Array<() => Promise<void>> = [];
+    const queue = {
+      enqueueTask: vi.fn(
+        (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+          queuedFns.push(fn);
+        },
+      ),
+      closeStdin: vi.fn(),
+    };
+
+    const { startSchedulerLoop } = await import('./task-scheduler.js');
+    startSchedulerLoop({
+      registeredGroups: () => ({ [baseTask.chat_jid]: group }),
+      getSessions: () => ({ [baseTask.group_folder]: 'session-123' }),
+      queue: queue as any,
+      onProcess: () => {},
+      sendMessage: vi.fn(async () => {}),
+    });
+
+    expect(queuedFns).toHaveLength(1);
+
+    await queuedFns[0]();
+
+    expect(mockRunContainerAgent).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: baseTask.prompt,
+        sessionId: 'session-123',
+        groupFolder: baseTask.group_folder,
+        chatJid: baseTask.chat_jid,
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
 });

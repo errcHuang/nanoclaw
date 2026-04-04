@@ -15,6 +15,8 @@ import {
   getRegisteredGroup,
   getTaskById,
   setRegisteredGroup,
+  storeChatMetadata,
+  storeMessageDirect,
 } from './db.js';
 import { processTaskIpc, IpcDeps } from './ipc.js';
 import { RegisteredGroup } from './types.js';
@@ -593,6 +595,53 @@ describe('schedule_task context_mode', () => {
 
     const tasks = getAllTasks();
     expect(tasks[0].context_mode).toBe('isolated');
+  });
+
+  it('accepts context_mode=snapshot and embeds recent chat context into the prompt', async () => {
+    const now = new Date();
+    const ts1 = new Date(now.getTime() - 60_000).toISOString();
+    const ts2 = new Date(now.getTime() - 30_000).toISOString();
+
+    storeChatMetadata('other@g.us', ts2);
+    storeMessageDirect({
+      id: 'snap-1',
+      chat_jid: 'other@g.us',
+      sender: 'alice@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: 'We decided to send the revised deck.',
+      timestamp: ts1,
+      is_from_me: false,
+    });
+    storeMessageDirect({
+      id: 'snap-2',
+      chat_jid: 'other@g.us',
+      sender: 'bob@s.whatsapp.net',
+      sender_name: 'Bob',
+      content: 'Follow up with finance tomorrow morning.',
+      timestamp: ts2,
+      is_from_me: false,
+    });
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'Tomorrow morning, remind me about what we decided.',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        context_mode: 'snapshot',
+        targetJid: 'other@g.us',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks[0].context_mode).toBe('snapshot');
+    expect(tasks[0].prompt).toContain('Tomorrow morning, remind me about what we decided.');
+    expect(tasks[0].prompt).toContain('[SNAPSHOT CONTEXT]');
+    expect(tasks[0].prompt).toContain('We decided to send the revised deck.');
+    expect(tasks[0].prompt).toContain('Follow up with finance tomorrow morning.');
   });
 
   it('defaults invalid context_mode to isolated', async () => {

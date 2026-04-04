@@ -4,6 +4,7 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import {
+  ASSISTANT_NAME,
   DATA_DIR,
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
@@ -14,10 +15,12 @@ import {
   createTask,
   deleteTask,
   getAllTasks,
+  getMessagesSince,
   getTaskById,
   updateTask,
 } from './db.js';
 import { logger } from './logger.js';
+import { formatMessages } from './router.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -35,6 +38,9 @@ export interface IpcDeps {
 }
 
 let ipcWatcherRunning = false;
+
+const SNAPSHOT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const SNAPSHOT_MAX_MESSAGES = 50;
 
 function refreshTaskSnapshots(deps: IpcDeps): void {
   const tasks = getAllTasks();
@@ -60,6 +66,28 @@ function refreshTaskSnapshots(deps: IpcDeps): void {
       snapshot,
     );
   }
+}
+
+function buildSnapshotPrompt(prompt: string, targetJid: string): string {
+  const sinceTimestamp = new Date(Date.now() - SNAPSHOT_LOOKBACK_MS).toISOString();
+  const recentMessages = getMessagesSince(
+    targetJid,
+    sinceTimestamp,
+    ASSISTANT_NAME,
+  ).slice(-SNAPSHOT_MAX_MESSAGES);
+
+  if (recentMessages.length === 0) {
+    return prompt;
+  }
+
+  return `${prompt}
+
+[SNAPSHOT CONTEXT]
+The following is a bounded snapshot of recent non-bot chat context captured when this task was scheduled.
+Use it as historical context only. Do not assume anything beyond this snapshot.
+
+${formatMessages(recentMessages)}
+[/SNAPSHOT CONTEXT]`;
 }
 
 export function startIpcWatcher(deps: IpcDeps): void {
@@ -279,14 +307,21 @@ export async function processTaskIpc(
 
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const contextMode =
-          data.context_mode === 'group' || data.context_mode === 'isolated'
+          data.context_mode === 'group' ||
+          data.context_mode === 'isolated' ||
+          data.context_mode === 'snapshot'
             ? data.context_mode
             : 'isolated';
+        const taskPrompt =
+          contextMode === 'snapshot'
+            ? buildSnapshotPrompt(data.prompt, targetJid)
+            : data.prompt;
+
         createTask({
           id: taskId,
           group_folder: targetFolder,
           chat_jid: targetJid,
-          prompt: data.prompt,
+          prompt: taskPrompt,
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,
           context_mode: contextMode,
@@ -295,7 +330,24 @@ export async function processTaskIpc(
           created_at: new Date().toISOString(),
         });
         logger.info(
-          { taskId, sourceGroup, targetFolder, contextMode },
+          {
+            taskId,
+            sourceGroup,
+            targetFolder,
+            requestedContextMode: data.context_mode || 'unspecified',
+            contextMode,
+            snapshotMessages:
+              contextMode === 'snapshot'
+                ? Math.min(
+                    SNAPSHOT_MAX_MESSAGES,
+                    getMessagesSince(
+                      targetJid,
+                      new Date(Date.now() - SNAPSHOT_LOOKBACK_MS).toISOString(),
+                      ASSISTANT_NAME,
+                    ).length,
+                  )
+                : 0,
+          },
           'Task created via IPC',
         );
         refreshTaskSnapshots(deps);
