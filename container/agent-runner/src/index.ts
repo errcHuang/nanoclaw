@@ -582,6 +582,7 @@ function buildOpenCodeConfig(
   const mcp: Record<string, unknown> = {
     nanoclaw: {
       type: 'local',
+      enabled: true,
       command: ['node', mcpServerPath],
       environment: {
         NANOCLAW_CHAT_JID: containerInput.chatJid,
@@ -594,6 +595,7 @@ function buildOpenCodeConfig(
   if (process.env.OPEN_BRAIN_KEY) {
     mcp['personal-mcp'] = {
       type: 'remote',
+      enabled: true,
       url: 'https://mcp.ehuangapp.com/mcp',
       oauth: false,
       headers: {
@@ -605,6 +607,7 @@ function buildOpenCodeConfig(
   if (process.env.GOOGLE_MAPS_API_KEY) {
     mcp['maps-grounding-lite-mcp'] = {
       type: 'remote',
+      enabled: true,
       url: 'https://mapstools.googleapis.com/mcp',
       oauth: false,
       headers: {
