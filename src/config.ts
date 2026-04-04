@@ -21,7 +21,7 @@ export const AGENT_RUNTIME =
 export const DEFAULT_MODEL =
   process.env.DEFAULT_MODEL ||
   envConfig.DEFAULT_MODEL ||
-  'openrouter/minimax/minimax-m2.5:free';
+  'openrouter/free';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 

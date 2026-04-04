@@ -109,7 +109,7 @@ const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 const AGENT_RUNTIME = process.env.AGENT_RUNTIME || 'opencode';
 const DEFAULT_MODEL =
-  process.env.DEFAULT_MODEL || 'openrouter/minimax/minimax-m2.5:free';
+  process.env.DEFAULT_MODEL || 'openrouter/free';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -534,6 +534,35 @@ function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
+function buildOpenRouterProvider(model: string): {
+  model: string;
+  provider: Record<string, unknown>;
+} {
+  const routerModelId = model.slice('openrouter/'.length);
+  return {
+    model: `orouter/${routerModelId}`,
+    provider: {
+      orouter: {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'OpenRouter',
+        options: {
+          baseURL: 'https://openrouter.ai/api/v1',
+          apiKey: '{env:OPENROUTER_API_KEY}',
+        },
+        models: {
+          [routerModelId]: {
+            name: routerModelId,
+            limit: {
+              context: 262144,
+              output: 65536,
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 function buildOpenCodeConfig(
   containerInput: ContainerInput,
   mcpServerPath: string,
@@ -584,22 +613,15 @@ function buildOpenCodeConfig(
     };
   }
 
+  const openRouterConfig = DEFAULT_MODEL.startsWith('openrouter/')
+    ? buildOpenRouterProvider(DEFAULT_MODEL)
+    : null;
+
   return {
     $schema: 'https://opencode.ai/config.json',
-    model: DEFAULT_MODEL,
+    model: openRouterConfig?.model || DEFAULT_MODEL,
     instructions,
-    disabled_providers: [
-      'anthropic',
-      'openai',
-      'gemini',
-      'xai',
-      'groq',
-      'mistral',
-      'deepseek',
-      'bedrock',
-      'vertex',
-      'ollama',
-    ],
+    ...(openRouterConfig ? { provider: openRouterConfig.provider } : {}),
     permission: {
       bash: 'allow',
       edit: 'allow',
@@ -661,6 +683,52 @@ function extractSessionId(raw: unknown): string | undefined {
   return undefined;
 }
 
+function parseOpenCodeEventStream(stdout: string): {
+  sessionId?: string;
+  result: string | null;
+  error?: string;
+} {
+  const textParts: string[] = [];
+  let sessionId: string | undefined;
+
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.startsWith('{')) continue;
+
+    try {
+      const event = JSON.parse(trimmed) as {
+        type?: string;
+        sessionID?: string;
+        error?: { data?: { message?: string } };
+        part?: { type?: string; text?: string };
+      };
+
+      if (event.sessionID) {
+        sessionId = event.sessionID;
+      }
+
+      if (event.type === 'error') {
+        return {
+          sessionId,
+          result: null,
+          error: event.error?.data?.message || 'OpenCode reported an error',
+        };
+      }
+
+      if (event.type === 'text' && event.part?.type === 'text' && event.part.text) {
+        textParts.push(event.part.text);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return {
+    sessionId,
+    result: textParts.join('').trim() || null,
+  };
+}
+
 async function getLatestOpenCodeSessionId(
   env: NodeJS.ProcessEnv,
 ): Promise<string | undefined> {
@@ -704,7 +772,7 @@ async function runOpenCodeQuery(
     OPENCODE_CLIENT: 'nanoclaw',
   };
 
-  const args = ['run', '--agent', 'build'];
+  const args = ['run', '--format', 'json', '--agent', 'build'];
   if (sessionId) {
     args.push('--session', sessionId);
   } else {
@@ -719,11 +787,16 @@ async function runOpenCodeQuery(
     );
   }
 
-  const latestSessionId = await getLatestOpenCodeSessionId(env);
+  const parsed = parseOpenCodeEventStream(result.stdout);
+  if (parsed.error) {
+    throw new Error(parsed.error);
+  }
+
+  const latestSessionId = parsed.sessionId || await getLatestOpenCodeSessionId(env);
   return {
     newSessionId: latestSessionId || sessionId,
     closedDuringQuery: false,
-    result: stripAnsi(result.stdout).trim() || null,
+    result: parsed.result,
   };
 }
 
@@ -818,6 +891,11 @@ async function main(): Promise<void> {
 
       // Emit session update so host can track it
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+
+      if (containerInput.isScheduledTask) {
+        log('Scheduled task query complete, exiting');
+        break;
+      }
 
       log('Query ended, waiting for next IPC message...');
 
