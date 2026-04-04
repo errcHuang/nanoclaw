@@ -6,6 +6,7 @@ import {
   ASSISTANT_NAME,
   DATA_DIR,
   IDLE_TIMEOUT,
+  IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   SESSION_CONTINUITY_WINDOW,
@@ -61,6 +62,7 @@ let messageLoopRunning = false;
 let whatsapp: WhatsAppChannel;
 const queue = new GroupQueue();
 const RECENT_IPC_DUPLICATE_WINDOW_MS = 15000;
+const FINAL_AUTO_SEND_GRACE_MS = IPC_POLL_INTERVAL + 250;
 const recentIpcMessages = new Map<string, { text: string; sentAt: number }>();
 
 function rememberIpcMessage(chatJid: string, text: string): void {
@@ -84,6 +86,25 @@ function shouldSuppressFinalAutoSend(chatJid: string, text: string): boolean {
     recentIpcMessages.delete(chatJid);
   }
   return shouldSuppress;
+}
+
+async function maybeSendFinalAutoMessage(
+  chatJid: string,
+  text: string,
+  logContext: Record<string, string>,
+): Promise<boolean> {
+  await new Promise((resolve) => setTimeout(resolve, FINAL_AUTO_SEND_GRACE_MS));
+
+  if (shouldSuppressFinalAutoSend(chatJid, text)) {
+    logger.info(
+      logContext,
+      'Suppressing duplicate final auto-send after IPC message',
+    );
+    return false;
+  }
+
+  await whatsapp.sendMessage(chatJid, text);
+  return true;
 }
 
 function loadState(): void {
@@ -277,14 +298,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = getDisplayText(raw);
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        if (shouldSuppressFinalAutoSend(chatJid, text)) {
-          logger.info(
-            { group: group.name },
-            'Suppressing duplicate final auto-send after IPC message',
-          );
-        } else {
-          await whatsapp.sendMessage(chatJid, text);
-        }
+        await maybeSendFinalAutoMessage(
+          chatJid,
+          text,
+          { group: group.name },
+        );
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -550,14 +568,11 @@ async function main(): Promise<void> {
     sendMessage: async (jid, rawText) => {
       const text = formatOutbound(rawText);
       if (!text) return;
-      if (shouldSuppressFinalAutoSend(jid, text)) {
-        logger.info(
-          { chatJid: jid },
-          'Suppressing duplicate scheduled-task auto-send after IPC message',
-        );
-        return;
-      }
-      await whatsapp.sendMessage(jid, text);
+      await maybeSendFinalAutoMessage(
+        jid,
+        text,
+        { chatJid: jid },
+      );
     },
   });
   startIpcWatcher({
