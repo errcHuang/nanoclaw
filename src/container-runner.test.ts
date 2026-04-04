@@ -17,7 +17,7 @@ vi.mock('./config.js', () => ({
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/nanoclaw-test-data',
-  DEFAULT_MODEL: 'openrouter/google/gemini-2.5-flash',
+  DEFAULT_MODEL: 'openrouter/minimax/minimax-m2.5:free',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
 }));
@@ -288,12 +288,33 @@ describe('container-runner timeout behavior', () => {
     const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
     expect(spawnArgs).toContain('AGENT_RUNTIME=opencode');
     expect(spawnArgs).toContain(
-      'DEFAULT_MODEL=openrouter/google/gemini-2.5-flash',
+      'DEFAULT_MODEL=openrouter/minimax/minimax-m2.5:free',
     );
     expect(
       spawnArgs.some((a) =>
         a.includes(
           '/tmp/nanoclaw-test-data/sessions/test-group/opencode:/home/node/.local/share/opencode',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      spawnArgs.some((a) =>
+        a.includes(
+          '/tmp/nanoclaw-test-data/sessions/test-group/opencode/state:/home/node/.local/state',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      spawnArgs.some((a) =>
+        a.includes(
+          '/tmp/nanoclaw-test-data/sessions/test-group/opencode/cache:/home/node/.cache',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      spawnArgs.some((a) =>
+        a.includes(
+          '/tmp/nanoclaw-test-data/sessions/test-group/opencode/config:/home/node/.config/opencode',
         ),
       ),
     ).toBe(true);

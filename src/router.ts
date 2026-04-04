@@ -20,10 +20,25 @@ export function stripInternalTags(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }
 
+export function normalizeOutboundForCompare(rawText: string): string {
+  return stripInternalTags(rawText).replace(/\s+/g, ' ').trim();
+}
+
 export function formatOutbound(rawText: string): string {
-  const text = stripInternalTags(rawText);
+  const text = normalizeOutboundForCompare(rawText);
   if (!text) return '';
   return text;
+}
+
+export function matchesRecentOutbound(
+  rawText: string,
+  recentText: string | null | undefined,
+): boolean {
+  if (!recentText) return false;
+  const current = normalizeOutboundForCompare(rawText);
+  const recent = normalizeOutboundForCompare(recentText);
+  if (!current || !recent) return false;
+  return current === recent;
 }
 
 export function routeOutbound(

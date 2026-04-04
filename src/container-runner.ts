@@ -63,6 +63,9 @@ const OBSIDIAN_VAULT_DIR = 'obsidian-vault';
 const OBSIDIAN_CONTAINER_PATH = '/workspace/extra/obsidian';
 const GWS_CONTAINER_PATH = '/workspace/gws';
 const OPENCODE_DATA_CONTAINER_PATH = '/home/node/.local/share/opencode';
+const OPENCODE_STATE_CONTAINER_PATH = '/home/node/.local/state';
+const OPENCODE_CACHE_CONTAINER_PATH = '/home/node/.cache';
+const OPENCODE_CONFIG_CONTAINER_PATH = '/home/node/.config/opencode';
 
 function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
   fs.mkdirSync(dstDir, { recursive: true });
@@ -161,10 +164,31 @@ function buildVolumeMounts(
     });
   } else {
     const groupOpenCodeDir = path.join(groupSessionRoot, 'opencode');
+    const groupOpenCodeStateDir = path.join(groupOpenCodeDir, 'state');
+    const groupOpenCodeCacheDir = path.join(groupOpenCodeDir, 'cache');
+    const groupOpenCodeConfigDir = path.join(groupOpenCodeDir, 'config');
     fs.mkdirSync(groupOpenCodeDir, { recursive: true });
+    fs.mkdirSync(groupOpenCodeStateDir, { recursive: true });
+    fs.mkdirSync(groupOpenCodeCacheDir, { recursive: true });
+    fs.mkdirSync(groupOpenCodeConfigDir, { recursive: true });
     mounts.push({
       hostPath: groupOpenCodeDir,
       containerPath: OPENCODE_DATA_CONTAINER_PATH,
+      readonly: false,
+    });
+    mounts.push({
+      hostPath: groupOpenCodeStateDir,
+      containerPath: OPENCODE_STATE_CONTAINER_PATH,
+      readonly: false,
+    });
+    mounts.push({
+      hostPath: groupOpenCodeCacheDir,
+      containerPath: OPENCODE_CACHE_CONTAINER_PATH,
+      readonly: false,
+    });
+    mounts.push({
+      hostPath: groupOpenCodeConfigDir,
+      containerPath: OPENCODE_CONFIG_CONTAINER_PATH,
       readonly: false,
     });
   }

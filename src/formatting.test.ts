@@ -5,6 +5,8 @@ import {
   escapeXml,
   formatMessages,
   formatOutbound,
+  matchesRecentOutbound,
+  normalizeOutboundForCompare,
   stripInternalTags,
 } from './router.js';
 import { NewMessage } from './types.js';
@@ -174,6 +176,41 @@ describe('formatOutbound', () => {
     expect(
       formatOutbound('<internal>thinking</internal>The answer is 42'),
     ).toBe('The answer is 42');
+  });
+
+  it('normalizes whitespace for consistent outbound text', () => {
+    expect(formatOutbound('hello   \n\n world')).toBe('hello world');
+  });
+});
+
+describe('normalizeOutboundForCompare', () => {
+  it('strips internal tags and collapses whitespace', () => {
+    expect(
+      normalizeOutboundForCompare(
+        '<internal>hidden</internal> Hello   there\n\nfriend ',
+      ),
+    ).toBe('Hello there friend');
+  });
+});
+
+describe('matchesRecentOutbound', () => {
+  it('matches equivalent visible outbound text', () => {
+    expect(
+      matchesRecentOutbound(
+        '<internal>hidden</internal>Hello   world',
+        'Hello world',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match distinct visible outbound text', () => {
+    expect(matchesRecentOutbound('Hello world', 'Different text')).toBe(false);
+  });
+
+  it('does not match empty outbound text', () => {
+    expect(
+      matchesRecentOutbound('<internal>hidden</internal>', 'Hello world'),
+    ).toBe(false);
   });
 });
 
