@@ -5,12 +5,23 @@ import { readEnvFile } from './env.js';
 // Read config values from .env (falls back to process.env).
 // Secrets are NOT read here — they stay on disk and are loaded only
 // where needed (container-runner.ts) to avoid leaking to child processes.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+  'AGENT_RUNTIME',
+  'DEFAULT_MODEL',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER || envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+export const AGENT_RUNTIME =
+  process.env.AGENT_RUNTIME || envConfig.AGENT_RUNTIME || 'opencode';
+export const DEFAULT_MODEL =
+  process.env.DEFAULT_MODEL ||
+  envConfig.DEFAULT_MODEL ||
+  'openrouter/google/gemini-2.5-flash';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -48,7 +59,7 @@ export const IDLE_TIMEOUT = parseInt(
 export const SESSION_CONTINUITY_WINDOW = parseInt(
   process.env.SESSION_CONTINUITY_WINDOW || '3600000',
   10,
-); // 60min default — how long to keep reusing a saved Claude session
+); // 60min default — how long to keep reusing a saved agent session
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,

@@ -12,10 +12,12 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
 vi.mock('./config.js', () => ({
+  AGENT_RUNTIME: 'opencode',
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/nanoclaw-test-data',
+  DEFAULT_MODEL: 'openrouter/google/gemini-2.5-flash',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
 }));
@@ -237,6 +239,7 @@ describe('container-runner timeout behavior', () => {
     expect(readEnvFile).toHaveBeenCalledWith([
       'CLAUDE_CODE_OAUTH_TOKEN',
       'ANTHROPIC_API_KEY',
+      'OPENROUTER_API_KEY',
       'OPEN_BRAIN_KEY',
       'GOOGLE_MAPS_API_KEY',
     ]);
@@ -267,6 +270,33 @@ describe('container-runner timeout behavior', () => {
     expect(spawnArgs).toContain(
       'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/workspace/gws/credentials.json',
     );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('passes runtime selection and default model into the container', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    const mockedSpawn = vi.mocked(spawn);
+    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
+    expect(spawnArgs).toContain('AGENT_RUNTIME=opencode');
+    expect(spawnArgs).toContain(
+      'DEFAULT_MODEL=openrouter/google/gemini-2.5-flash',
+    );
+    expect(
+      spawnArgs.some((a) =>
+        a.includes(
+          '/tmp/nanoclaw-test-data/sessions/test-group/opencode:/home/node/.local/share/opencode',
+        ),
+      ),
+    ).toBe(true);
 
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);

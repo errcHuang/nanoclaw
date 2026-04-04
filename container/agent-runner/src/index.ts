@@ -16,6 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
@@ -106,6 +107,9 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const AGENT_RUNTIME = process.env.AGENT_RUNTIME || 'opencode';
+const DEFAULT_MODEL =
+  process.env.DEFAULT_MODEL || 'openrouter/google/gemini-2.5-flash';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -526,6 +530,203 @@ async function runQuery(
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+function buildOpenCodeConfig(
+  containerInput: ContainerInput,
+  mcpServerPath: string,
+): Record<string, unknown> {
+  const instructions: string[] = [];
+
+  if (containerInput.isMain && fs.existsSync('/workspace/project/AGENTS.md')) {
+    instructions.push('/workspace/project/AGENTS.md');
+  }
+  if (fs.existsSync('/workspace/group/CLAUDE.md')) {
+    instructions.push('/workspace/group/CLAUDE.md');
+  }
+  if (!containerInput.isMain && fs.existsSync('/workspace/global/CLAUDE.md')) {
+    instructions.push('/workspace/global/CLAUDE.md');
+  }
+
+  const mcp: Record<string, unknown> = {
+    nanoclaw: {
+      type: 'local',
+      command: ['node', mcpServerPath],
+      environment: {
+        NANOCLAW_CHAT_JID: containerInput.chatJid,
+        NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+        NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+      },
+    },
+  };
+
+  if (process.env.OPEN_BRAIN_KEY) {
+    mcp['personal-mcp'] = {
+      type: 'remote',
+      url: 'https://mcp.ehuangapp.com/mcp',
+      oauth: false,
+      headers: {
+        Authorization: 'Bearer {env:OPEN_BRAIN_KEY}',
+      },
+    };
+  }
+
+  if (process.env.GOOGLE_MAPS_API_KEY) {
+    mcp['maps-grounding-lite-mcp'] = {
+      type: 'remote',
+      url: 'https://mapstools.googleapis.com/mcp',
+      oauth: false,
+      headers: {
+        'X-Goog-Api-Key': '{env:GOOGLE_MAPS_API_KEY}',
+      },
+    };
+  }
+
+  return {
+    $schema: 'https://opencode.ai/config.json',
+    model: DEFAULT_MODEL,
+    instructions,
+    disabled_providers: [
+      'anthropic',
+      'openai',
+      'gemini',
+      'xai',
+      'groq',
+      'mistral',
+      'deepseek',
+      'bedrock',
+      'vertex',
+      'ollama',
+    ],
+    permission: {
+      bash: 'allow',
+      edit: 'allow',
+      webfetch: 'allow',
+    },
+    mcp,
+  };
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: '/workspace/group',
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function extractSessionId(raw: unknown): string | undefined {
+  if (!raw) return undefined;
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const id = extractSessionId(item);
+      if (id) return id;
+    }
+    return undefined;
+  }
+  if (typeof raw === 'object') {
+    const value = raw as Record<string, unknown>;
+    for (const key of ['id', 'sessionID', 'sessionId']) {
+      if (typeof value[key] === 'string') {
+        return value[key] as string;
+      }
+    }
+    for (const nested of Object.values(value)) {
+      const id = extractSessionId(nested);
+      if (id) return id;
+    }
+  }
+  return undefined;
+}
+
+async function getLatestOpenCodeSessionId(
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const result = await runCommand(
+    'opencode',
+    ['session', 'list', '--max-count', '1', '--format', 'json'],
+    env,
+  );
+
+  if (result.code !== 0 || !result.stdout.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return extractSessionId(parsed);
+  } catch (err) {
+    log(`Failed to parse OpenCode session list: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+}
+
+async function runOpenCodeQuery(
+  prompt: string,
+  sessionId: string | undefined,
+  mcpServerPath: string,
+  containerInput: ContainerInput,
+  runtimeEnv: NodeJS.ProcessEnv,
+): Promise<{ newSessionId?: string; closedDuringQuery: boolean; result: string | null }> {
+  const env: NodeJS.ProcessEnv = {
+    ...runtimeEnv,
+    NO_COLOR: '1',
+    CI: '1',
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(
+      buildOpenCodeConfig(containerInput, mcpServerPath),
+    ),
+    OPENCODE_DISABLE_AUTOUPDATE: '1',
+    OPENCODE_DISABLE_PRUNE: '1',
+    OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
+    OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
+    OPENCODE_CLIENT: 'nanoclaw',
+  };
+
+  const args = ['run', '--agent', 'build'];
+  if (sessionId) {
+    args.push('--session', sessionId);
+  } else {
+    args.push('--title', `NanoClaw ${containerInput.groupFolder}`);
+  }
+  args.push(prompt);
+
+  const result = await runCommand('opencode', args, env);
+  if (result.code !== 0) {
+    throw new Error(
+      `OpenCode exited with code ${result.code}: ${stripAnsi(result.stderr).trim().slice(-400)}`,
+    );
+  }
+
+  const latestSessionId = await getLatestOpenCodeSessionId(env);
+  return {
+    newSessionId: latestSessionId || sessionId,
+    closedDuringQuery: false,
+    result: stripAnsi(result.stdout).trim() || null,
+  };
+}
+
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
 
@@ -544,11 +745,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Build SDK env: merge secrets into process.env for the SDK only.
-  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
-  const sdkEnv: Record<string, string | undefined> = { ...process.env };
+  // Build runtime env: merge secrets for the active agent runtime only.
+  // Secrets never touch process.env itself, so Bash subprocesses do not inherit them by default.
+  const runtimeEnv: Record<string, string | undefined> = { ...process.env };
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
-    sdkEnv[key] = value;
+    runtimeEnv[key] = value;
   }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -575,22 +776,44 @@ async function main(): Promise<void> {
   let resumeAt: string | undefined;
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
+      log(`Starting ${AGENT_RUNTIME} query (session: ${sessionId || 'new'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
-      }
+      if (AGENT_RUNTIME === 'claude') {
+        const queryResult = await runQuery(
+          prompt,
+          sessionId,
+          mcpServerPath,
+          containerInput,
+          runtimeEnv,
+          resumeAt,
+        );
+        if (queryResult.newSessionId) {
+          sessionId = queryResult.newSessionId;
+        }
+        if (queryResult.lastAssistantUuid) {
+          resumeAt = queryResult.lastAssistantUuid;
+        }
 
-      // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
+      } else {
+        const queryResult = await runOpenCodeQuery(
+          prompt,
+          sessionId,
+          mcpServerPath,
+          containerInput,
+          runtimeEnv,
+        );
+        if (queryResult.newSessionId) {
+          sessionId = queryResult.newSessionId;
+        }
+        writeOutput({
+          status: 'success',
+          result: queryResult.result,
+          newSessionId: sessionId,
+        });
       }
 
       // Emit session update so host can track it
