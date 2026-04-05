@@ -109,7 +109,7 @@ const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 const AGENT_RUNTIME = process.env.AGENT_RUNTIME || 'opencode';
 const DEFAULT_MODEL =
-  process.env.DEFAULT_MODEL || 'openrouter/free';
+  process.env.DEFAULT_MODEL || 'openrouter/stepfun/step-3.5-flash:free';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
