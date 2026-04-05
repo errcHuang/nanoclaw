@@ -570,7 +570,30 @@ function buildOpenCodeConfig(
   mcpServerPath: string,
   model: string,
 ): Record<string, unknown> {
-  const instructions: string[] = [];
+  const runtimeInstructionPath = '/tmp/opencode-runtime-instructions.md';
+  const enabledMcpServers = ['nanoclaw'];
+  if (process.env.OPEN_BRAIN_KEY) {
+    enabledMcpServers.push('personal-mcp');
+  }
+  if (process.env.GOOGLE_MAPS_API_KEY) {
+    enabledMcpServers.push('maps-grounding-lite-mcp');
+  }
+
+  fs.writeFileSync(
+    runtimeInstructionPath,
+    [
+      '# Runtime Tooling',
+      '',
+      `Enabled MCP servers for this run: ${enabledMcpServers.join(', ')}.`,
+      '',
+      'Do not claim MCP tools are unavailable based on memory, shell environment, or documentation alone.',
+      'If the user asks about available tools or MCP access, first use ToolSearch or invoke the relevant MCP tool before answering.',
+      'If an MCP tool call fails, describe the actual failure instead of saying the MCP server is missing.',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const instructions: string[] = [runtimeInstructionPath];
 
   if (containerInput.isMain && fs.existsSync('/workspace/project/AGENTS.md')) {
     instructions.push('/workspace/project/AGENTS.md');
