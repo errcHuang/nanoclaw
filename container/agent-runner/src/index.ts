@@ -109,7 +109,9 @@ const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 const AGENT_RUNTIME = process.env.AGENT_RUNTIME || 'opencode';
 const DEFAULT_MODEL =
-  process.env.DEFAULT_MODEL || 'openrouter/stepfun/step-3.5-flash:free';
+  process.env.DEFAULT_MODEL || 'openrouter/moonshotai/kimi-k2.5';
+const FALLBACK_MODEL =
+  process.env.FALLBACK_MODEL || 'openrouter/anthropic/claude-sonnet-4.6';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -566,6 +568,7 @@ function buildOpenRouterProvider(model: string): {
 function buildOpenCodeConfig(
   containerInput: ContainerInput,
   mcpServerPath: string,
+  model: string,
 ): Record<string, unknown> {
   const instructions: string[] = [];
 
@@ -616,13 +619,13 @@ function buildOpenCodeConfig(
     };
   }
 
-  const openRouterConfig = DEFAULT_MODEL.startsWith('openrouter/')
-    ? buildOpenRouterProvider(DEFAULT_MODEL)
+  const openRouterConfig = model.startsWith('openrouter/')
+    ? buildOpenRouterProvider(model)
     : null;
 
   return {
     $schema: 'https://opencode.ai/config.json',
-    model: openRouterConfig?.model || DEFAULT_MODEL,
+    model: openRouterConfig?.model || model,
     instructions,
     ...(openRouterConfig ? { provider: openRouterConfig.provider } : {}),
     permission: {
@@ -761,46 +764,64 @@ async function runOpenCodeQuery(
   containerInput: ContainerInput,
   runtimeEnv: NodeJS.ProcessEnv,
 ): Promise<{ newSessionId?: string; closedDuringQuery: boolean; result: string | null }> {
-  const env: NodeJS.ProcessEnv = {
-    ...runtimeEnv,
-    NO_COLOR: '1',
-    CI: '1',
-    OPENCODE_CONFIG_CONTENT: JSON.stringify(
-      buildOpenCodeConfig(containerInput, mcpServerPath),
-    ),
-    OPENCODE_DISABLE_AUTOUPDATE: '1',
-    OPENCODE_DISABLE_PRUNE: '1',
-    OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
-    OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
-    OPENCODE_CLIENT: 'nanoclaw',
-  };
+  async function runWithModel(
+    model: string,
+  ): Promise<{ newSessionId?: string; closedDuringQuery: boolean; result: string | null }> {
+    const env: NodeJS.ProcessEnv = {
+      ...runtimeEnv,
+      NO_COLOR: '1',
+      CI: '1',
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(
+        buildOpenCodeConfig(containerInput, mcpServerPath, model),
+      ),
+      OPENCODE_DISABLE_AUTOUPDATE: '1',
+      OPENCODE_DISABLE_PRUNE: '1',
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
+      OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
+      OPENCODE_CLIENT: 'nanoclaw',
+    };
 
-  const args = ['run', '--format', 'json', '--agent', 'build'];
-  if (sessionId) {
-    args.push('--session', sessionId);
-  } else {
-    args.push('--title', `NanoClaw ${containerInput.groupFolder}`);
+    const args = ['run', '--format', 'json', '--agent', 'build'];
+    if (sessionId) {
+      args.push('--session', sessionId);
+    } else {
+      args.push('--title', `NanoClaw ${containerInput.groupFolder}`);
+    }
+    args.push(prompt);
+
+    log(`Running OpenCode query with model ${model} (session: ${sessionId || 'new'})`);
+    const result = await runCommand('opencode', args, env);
+    if (result.code !== 0) {
+      throw new Error(
+        `OpenCode exited with code ${result.code}: ${stripAnsi(result.stderr).trim().slice(-400)}`,
+      );
+    }
+
+    const parsed = parseOpenCodeEventStream(result.stdout);
+    if (parsed.error) {
+      throw new Error(parsed.error);
+    }
+
+    const latestSessionId = parsed.sessionId || await getLatestOpenCodeSessionId(env);
+    return {
+      newSessionId: latestSessionId || sessionId,
+      closedDuringQuery: false,
+      result: parsed.result,
+    };
   }
-  args.push(prompt);
 
-  const result = await runCommand('opencode', args, env);
-  if (result.code !== 0) {
-    throw new Error(
-      `OpenCode exited with code ${result.code}: ${stripAnsi(result.stderr).trim().slice(-400)}`,
-    );
+  try {
+    return await runWithModel(DEFAULT_MODEL);
+  } catch (err) {
+    if (FALLBACK_MODEL && FALLBACK_MODEL !== DEFAULT_MODEL) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(
+        `Primary model ${DEFAULT_MODEL} failed, retrying with fallback ${FALLBACK_MODEL}: ${message}`,
+      );
+      return runWithModel(FALLBACK_MODEL);
+    }
+    throw err;
   }
-
-  const parsed = parseOpenCodeEventStream(result.stdout);
-  if (parsed.error) {
-    throw new Error(parsed.error);
-  }
-
-  const latestSessionId = parsed.sessionId || await getLatestOpenCodeSessionId(env);
-  return {
-    newSessionId: latestSessionId || sessionId,
-    closedDuringQuery: false,
-    result: parsed.result,
-  };
 }
 
 async function main(): Promise<void> {

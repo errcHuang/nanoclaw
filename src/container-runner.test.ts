@@ -17,7 +17,8 @@ vi.mock('./config.js', () => ({
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/nanoclaw-test-data',
-  DEFAULT_MODEL: 'openrouter/stepfun/step-3.5-flash:free',
+  DEFAULT_MODEL: 'openrouter/moonshotai/kimi-k2.5',
+  FALLBACK_MODEL: 'openrouter/anthropic/claude-sonnet-4.6',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
 }));
@@ -288,7 +289,10 @@ describe('container-runner timeout behavior', () => {
     const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
     expect(spawnArgs).toContain('AGENT_RUNTIME=opencode');
     expect(spawnArgs).toContain(
-      'DEFAULT_MODEL=openrouter/stepfun/step-3.5-flash:free',
+      'DEFAULT_MODEL=openrouter/moonshotai/kimi-k2.5',
+    );
+    expect(spawnArgs).toContain(
+      'FALLBACK_MODEL=openrouter/anthropic/claude-sonnet-4.6',
     );
     expect(
       spawnArgs.some((a) =>

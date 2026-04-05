@@ -14,6 +14,7 @@ import {
   CONTAINER_TIMEOUT,
   DATA_DIR,
   DEFAULT_MODEL,
+  FALLBACK_MODEL,
   GROUPS_DIR,
   IDLE_TIMEOUT,
 } from './config.js';
@@ -279,6 +280,7 @@ function buildContainerArgs(
 
   args.push('-e', `AGENT_RUNTIME=${AGENT_RUNTIME}`);
   args.push('-e', `DEFAULT_MODEL=${DEFAULT_MODEL}`);
+  args.push('-e', `FALLBACK_MODEL=${FALLBACK_MODEL}`);
 
   if (isMain) {
     args.push(

@@ -10,6 +10,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'AGENT_RUNTIME',
   'DEFAULT_MODEL',
+  'FALLBACK_MODEL',
 ]);
 
 export const ASSISTANT_NAME =
@@ -21,7 +22,11 @@ export const AGENT_RUNTIME =
 export const DEFAULT_MODEL =
   process.env.DEFAULT_MODEL ||
   envConfig.DEFAULT_MODEL ||
-  'openrouter/stepfun/step-3.5-flash:free';
+  'openrouter/moonshotai/kimi-k2.5';
+export const FALLBACK_MODEL =
+  process.env.FALLBACK_MODEL ||
+  envConfig.FALLBACK_MODEL ||
+  'openrouter/anthropic/claude-sonnet-4.6';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
