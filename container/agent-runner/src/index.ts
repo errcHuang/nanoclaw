@@ -16,7 +16,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
@@ -107,11 +106,6 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-const AGENT_RUNTIME = process.env.AGENT_RUNTIME || 'opencode';
-const DEFAULT_MODEL =
-  process.env.DEFAULT_MODEL || 'openrouter/moonshotai/kimi-k2.5';
-const FALLBACK_MODEL =
-  process.env.FALLBACK_MODEL || 'openrouter/anthropic/claude-sonnet-4.6';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -532,321 +526,6 @@ async function runQuery(
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
-function stripAnsi(text: string): string {
-  return text.replace(/\u001b\[[0-9;]*m/g, '');
-}
-
-function buildOpenRouterProvider(model: string): {
-  model: string;
-  provider: Record<string, unknown>;
-} {
-  const routerModelId = model.slice('openrouter/'.length);
-  return {
-    model: `orouter/${routerModelId}`,
-    provider: {
-      orouter: {
-        npm: '@ai-sdk/openai-compatible',
-        name: 'OpenRouter',
-        options: {
-          baseURL: 'https://openrouter.ai/api/v1',
-          apiKey: '{env:OPENROUTER_API_KEY}',
-        },
-        models: {
-          [routerModelId]: {
-            name: routerModelId,
-            limit: {
-              context: 262144,
-              output: 65536,
-            },
-          },
-        },
-      },
-    },
-  };
-}
-
-function buildOpenCodeConfig(
-  containerInput: ContainerInput,
-  mcpServerPath: string,
-  model: string,
-): Record<string, unknown> {
-  const runtimeInstructionPath = '/tmp/opencode-runtime-instructions.md';
-  const enabledMcpServers = ['nanoclaw'];
-  if (process.env.OPEN_BRAIN_KEY) {
-    enabledMcpServers.push('personal-mcp');
-  }
-  if (process.env.GOOGLE_MAPS_API_KEY) {
-    enabledMcpServers.push('maps-grounding-lite-mcp');
-  }
-
-  fs.writeFileSync(
-    runtimeInstructionPath,
-    [
-      '# Runtime Tooling',
-      '',
-      `Enabled MCP servers for this run: ${enabledMcpServers.join(', ')}.`,
-      '',
-      'Do not claim MCP tools are unavailable based on memory, shell environment, or documentation alone.',
-      'If the user asks about available tools or MCP access, first use ToolSearch or invoke the relevant MCP tool before answering.',
-      'If an MCP tool call fails, describe the actual failure instead of saying the MCP server is missing.',
-    ].join('\n'),
-    'utf8',
-  );
-
-  const instructions: string[] = [runtimeInstructionPath];
-
-  if (containerInput.isMain && fs.existsSync('/workspace/project/AGENTS.md')) {
-    instructions.push('/workspace/project/AGENTS.md');
-  }
-  if (fs.existsSync('/workspace/group/CLAUDE.md')) {
-    instructions.push('/workspace/group/CLAUDE.md');
-  }
-  if (!containerInput.isMain && fs.existsSync('/workspace/global/CLAUDE.md')) {
-    instructions.push('/workspace/global/CLAUDE.md');
-  }
-
-  const mcp: Record<string, unknown> = {
-    nanoclaw: {
-      type: 'local',
-      enabled: true,
-      command: ['node', mcpServerPath],
-      environment: {
-        NANOCLAW_CHAT_JID: containerInput.chatJid,
-        NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-        NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-      },
-    },
-  };
-
-  if (process.env.OPEN_BRAIN_KEY) {
-    mcp['personal-mcp'] = {
-      type: 'remote',
-      enabled: true,
-      url: 'https://mcp.ehuangapp.com/mcp',
-      oauth: false,
-      headers: {
-        Authorization: 'Bearer {env:OPEN_BRAIN_KEY}',
-      },
-    };
-  }
-
-  if (process.env.GOOGLE_MAPS_API_KEY) {
-    mcp['maps-grounding-lite-mcp'] = {
-      type: 'remote',
-      enabled: true,
-      url: 'https://mapstools.googleapis.com/mcp',
-      oauth: false,
-      headers: {
-        'X-Goog-Api-Key': '{env:GOOGLE_MAPS_API_KEY}',
-      },
-    };
-  }
-
-  const openRouterConfig = model.startsWith('openrouter/')
-    ? buildOpenRouterProvider(model)
-    : null;
-
-  return {
-    $schema: 'https://opencode.ai/config.json',
-    model: openRouterConfig?.model || model,
-    instructions,
-    ...(openRouterConfig ? { provider: openRouterConfig.provider } : {}),
-    permission: {
-      bash: 'allow',
-      edit: 'allow',
-      webfetch: 'allow',
-    },
-    mcp,
-  };
-}
-
-async function runCommand(
-  command: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: '/workspace/group',
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', reject);
-    child.on('close', (code) => {
-      resolve({ code, stdout, stderr });
-    });
-  });
-}
-
-function extractSessionId(raw: unknown): string | undefined {
-  if (!raw) return undefined;
-  if (Array.isArray(raw)) {
-    for (const item of raw) {
-      const id = extractSessionId(item);
-      if (id) return id;
-    }
-    return undefined;
-  }
-  if (typeof raw === 'object') {
-    const value = raw as Record<string, unknown>;
-    for (const key of ['id', 'sessionID', 'sessionId']) {
-      if (typeof value[key] === 'string') {
-        return value[key] as string;
-      }
-    }
-    for (const nested of Object.values(value)) {
-      const id = extractSessionId(nested);
-      if (id) return id;
-    }
-  }
-  return undefined;
-}
-
-function parseOpenCodeEventStream(stdout: string): {
-  sessionId?: string;
-  result: string | null;
-  error?: string;
-} {
-  const textParts: string[] = [];
-  let sessionId: string | undefined;
-
-  for (const line of stdout.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || !trimmed.startsWith('{')) continue;
-
-    try {
-      const event = JSON.parse(trimmed) as {
-        type?: string;
-        sessionID?: string;
-        error?: { data?: { message?: string } };
-        part?: { type?: string; text?: string };
-      };
-
-      if (event.sessionID) {
-        sessionId = event.sessionID;
-      }
-
-      if (event.type === 'error') {
-        return {
-          sessionId,
-          result: null,
-          error: event.error?.data?.message || 'OpenCode reported an error',
-        };
-      }
-
-      if (event.type === 'text' && event.part?.type === 'text' && event.part.text) {
-        textParts.push(event.part.text);
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return {
-    sessionId,
-    result: textParts.join('').trim() || null,
-  };
-}
-
-async function getLatestOpenCodeSessionId(
-  env: NodeJS.ProcessEnv,
-): Promise<string | undefined> {
-  const result = await runCommand(
-    'opencode',
-    ['session', 'list', '--max-count', '1', '--format', 'json'],
-    env,
-  );
-
-  if (result.code !== 0 || !result.stdout.trim()) {
-    return undefined;
-  }
-
-  try {
-    const parsed = JSON.parse(result.stdout);
-    return extractSessionId(parsed);
-  } catch (err) {
-    log(`Failed to parse OpenCode session list: ${err instanceof Error ? err.message : String(err)}`);
-    return undefined;
-  }
-}
-
-async function runOpenCodeQuery(
-  prompt: string,
-  sessionId: string | undefined,
-  mcpServerPath: string,
-  containerInput: ContainerInput,
-  runtimeEnv: NodeJS.ProcessEnv,
-): Promise<{ newSessionId?: string; closedDuringQuery: boolean; result: string | null }> {
-  async function runWithModel(
-    model: string,
-  ): Promise<{ newSessionId?: string; closedDuringQuery: boolean; result: string | null }> {
-    const env: NodeJS.ProcessEnv = {
-      ...runtimeEnv,
-      NO_COLOR: '1',
-      CI: '1',
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(
-        buildOpenCodeConfig(containerInput, mcpServerPath, model),
-      ),
-      OPENCODE_DISABLE_AUTOUPDATE: '1',
-      OPENCODE_DISABLE_PRUNE: '1',
-      OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
-      OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
-      OPENCODE_CLIENT: 'nanoclaw',
-    };
-
-    const args = ['run', '--format', 'json', '--agent', 'build'];
-    if (sessionId) {
-      args.push('--session', sessionId);
-    } else {
-      args.push('--title', `NanoClaw ${containerInput.groupFolder}`);
-    }
-    args.push(prompt);
-
-    log(`Running OpenCode query with model ${model} (session: ${sessionId || 'new'})`);
-    const result = await runCommand('opencode', args, env);
-    if (result.code !== 0) {
-      throw new Error(
-        `OpenCode exited with code ${result.code}: ${stripAnsi(result.stderr).trim().slice(-400)}`,
-      );
-    }
-
-    const parsed = parseOpenCodeEventStream(result.stdout);
-    if (parsed.error) {
-      throw new Error(parsed.error);
-    }
-
-    const latestSessionId = parsed.sessionId || await getLatestOpenCodeSessionId(env);
-    return {
-      newSessionId: latestSessionId || sessionId,
-      closedDuringQuery: false,
-      result: parsed.result,
-    };
-  }
-
-  try {
-    return await runWithModel(DEFAULT_MODEL);
-  } catch (err) {
-    if (FALLBACK_MODEL && FALLBACK_MODEL !== DEFAULT_MODEL) {
-      const message = err instanceof Error ? err.message : String(err);
-      log(
-        `Primary model ${DEFAULT_MODEL} failed, retrying with fallback ${FALLBACK_MODEL}: ${message}`,
-      );
-      return runWithModel(FALLBACK_MODEL);
-    }
-    throw err;
-  }
-}
-
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
 
@@ -865,11 +544,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Build runtime env: merge secrets for the active agent runtime only.
-  // Secrets never touch process.env itself, so Bash subprocesses do not inherit them by default.
-  const runtimeEnv: Record<string, string | undefined> = { ...process.env };
+  // Build SDK env: merge secrets into process.env for the SDK only.
+  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
+  const sdkEnv: Record<string, string | undefined> = { ...process.env };
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
-    runtimeEnv[key] = value;
+    sdkEnv[key] = value;
   }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -896,53 +575,26 @@ async function main(): Promise<void> {
   let resumeAt: string | undefined;
   try {
     while (true) {
-      log(`Starting ${AGENT_RUNTIME} query (session: ${sessionId || 'new'})...`);
+      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      if (AGENT_RUNTIME === 'claude') {
-        const queryResult = await runQuery(
-          prompt,
-          sessionId,
-          mcpServerPath,
-          containerInput,
-          runtimeEnv,
-          resumeAt,
-        );
-        if (queryResult.newSessionId) {
-          sessionId = queryResult.newSessionId;
-        }
-        if (queryResult.lastAssistantUuid) {
-          resumeAt = queryResult.lastAssistantUuid;
-        }
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      if (queryResult.newSessionId) {
+        sessionId = queryResult.newSessionId;
+      }
+      if (queryResult.lastAssistantUuid) {
+        resumeAt = queryResult.lastAssistantUuid;
+      }
 
-        if (queryResult.closedDuringQuery) {
-          log('Close sentinel consumed during query, exiting');
-          break;
-        }
-      } else {
-        const queryResult = await runOpenCodeQuery(
-          prompt,
-          sessionId,
-          mcpServerPath,
-          containerInput,
-          runtimeEnv,
-        );
-        if (queryResult.newSessionId) {
-          sessionId = queryResult.newSessionId;
-        }
-        writeOutput({
-          status: 'success',
-          result: queryResult.result,
-          newSessionId: sessionId,
-        });
+      // If _close was consumed during the query, exit immediately.
+      // Don't emit a session-update marker (it would reset the host's
+      // idle timer and cause a 30-min delay before the next _close).
+      if (queryResult.closedDuringQuery) {
+        log('Close sentinel consumed during query, exiting');
+        break;
       }
 
       // Emit session update so host can track it
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
-
-      if (containerInput.isScheduledTask) {
-        log('Scheduled task query complete, exiting');
-        break;
-      }
 
       log('Query ended, waiting for next IPC message...');
 

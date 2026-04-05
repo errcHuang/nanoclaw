@@ -6,7 +6,6 @@ import {
   ASSISTANT_NAME,
   DATA_DIR,
   IDLE_TIMEOUT,
-  IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   SESSION_CONTINUITY_WINDOW,
@@ -35,11 +34,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
-import {
-  formatMessages,
-  formatOutbound,
-  matchesRecentOutbound,
-} from './router.js';
+import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -61,51 +56,6 @@ let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
 const queue = new GroupQueue();
-const RECENT_IPC_DUPLICATE_WINDOW_MS = 15000;
-const FINAL_AUTO_SEND_GRACE_MS = IPC_POLL_INTERVAL + 250;
-const recentIpcMessages = new Map<string, { text: string; sentAt: number }>();
-
-function rememberIpcMessage(chatJid: string, text: string): void {
-  const formatted = formatOutbound(text);
-  if (!formatted) return;
-  recentIpcMessages.set(chatJid, {
-    text: formatted,
-    sentAt: Date.now(),
-  });
-}
-
-function shouldSuppressFinalAutoSend(chatJid: string, text: string): boolean {
-  const recent = recentIpcMessages.get(chatJid);
-  if (!recent) return false;
-  if (Date.now() - recent.sentAt > RECENT_IPC_DUPLICATE_WINDOW_MS) {
-    recentIpcMessages.delete(chatJid);
-    return false;
-  }
-  const shouldSuppress = matchesRecentOutbound(text, recent.text);
-  if (shouldSuppress) {
-    recentIpcMessages.delete(chatJid);
-  }
-  return shouldSuppress;
-}
-
-async function maybeSendFinalAutoMessage(
-  chatJid: string,
-  text: string,
-  logContext: Record<string, string>,
-): Promise<boolean> {
-  await new Promise((resolve) => setTimeout(resolve, FINAL_AUTO_SEND_GRACE_MS));
-
-  if (shouldSuppressFinalAutoSend(chatJid, text)) {
-    logger.info(
-      logContext,
-      'Suppressing duplicate final auto-send after IPC message',
-    );
-    return false;
-  }
-
-  await whatsapp.sendMessage(chatJid, text);
-  return true;
-}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -298,11 +248,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = getDisplayText(raw);
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await maybeSendFinalAutoMessage(
-          chatJid,
-          text,
-          { group: group.name },
-        );
+        await whatsapp.sendMessage(chatJid, text);
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -567,21 +513,11 @@ async function main(): Promise<void> {
     onProcess: (groupJid, proc, containerName, groupFolder) => queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
       const text = formatOutbound(rawText);
-      if (!text) return;
-      await maybeSendFinalAutoMessage(
-        jid,
-        text,
-        { chatJid: jid },
-      );
+      if (text) await whatsapp.sendMessage(jid, text);
     },
   });
   startIpcWatcher({
-    sendMessage: async (jid, text) => {
-      const formatted = formatOutbound(text);
-      if (!formatted) return;
-      await whatsapp.sendMessage(jid, formatted);
-      rememberIpcMessage(jid, formatted);
-    },
+    sendMessage: (jid, text) => whatsapp.sendMessage(jid, text),
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),

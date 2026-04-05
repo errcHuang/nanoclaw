@@ -8,13 +8,10 @@ import os from 'os';
 import path from 'path';
 
 import {
-  AGENT_RUNTIME,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
-  DEFAULT_MODEL,
-  FALLBACK_MODEL,
   GROUPS_DIR,
   IDLE_TIMEOUT,
 } from './config.js';
@@ -63,10 +60,6 @@ interface VolumeMount {
 const OBSIDIAN_VAULT_DIR = 'obsidian-vault';
 const OBSIDIAN_CONTAINER_PATH = '/workspace/extra/obsidian';
 const GWS_CONTAINER_PATH = '/workspace/gws';
-const OPENCODE_DATA_CONTAINER_PATH = '/home/node/.local/share/opencode';
-const OPENCODE_STATE_CONTAINER_PATH = '/home/node/.local/state';
-const OPENCODE_CACHE_CONTAINER_PATH = '/home/node/.cache';
-const OPENCODE_CONFIG_CONTAINER_PATH = '/home/node/.config/opencode';
 
 function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
   fs.mkdirSync(dstDir, { recursive: true });
@@ -130,69 +123,48 @@ function buildVolumeMounts(
     }
   }
 
-  const groupSessionRoot = path.join(DATA_DIR, 'sessions', group.folder);
-  fs.mkdirSync(groupSessionRoot, { recursive: true });
-
-  if (AGENT_RUNTIME === 'claude') {
-    const groupSessionsDir = path.join(groupSessionRoot, '.claude');
-    fs.mkdirSync(groupSessionsDir, { recursive: true });
-    const settingsFile = path.join(groupSessionsDir, 'settings.json');
-    if (!fs.existsSync(settingsFile)) {
-      fs.writeFileSync(settingsFile, JSON.stringify({
-        env: {
-          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-        },
-      }, null, 2) + '\n');
-    }
-
-    // Sync skills from container/skills/ into each group's .claude/skills/
-    const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-    const skillsDst = path.join(groupSessionsDir, 'skills');
-    if (fs.existsSync(skillsSrc)) {
-      for (const skillDir of fs.readdirSync(skillsSrc)) {
-        const srcDir = path.join(skillsSrc, skillDir);
-        if (!fs.statSync(srcDir).isDirectory()) continue;
-        const dstDir = path.join(skillsDst, skillDir);
-        copyDirectoryRecursive(srcDir, dstDir);
-      }
-    }
-    mounts.push({
-      hostPath: groupSessionsDir,
-      containerPath: '/home/node/.claude',
-      readonly: false,
-    });
-  } else {
-    const groupOpenCodeDir = path.join(groupSessionRoot, 'opencode');
-    const groupOpenCodeStateDir = path.join(groupOpenCodeDir, 'state');
-    const groupOpenCodeCacheDir = path.join(groupOpenCodeDir, 'cache');
-    const groupOpenCodeConfigDir = path.join(groupOpenCodeDir, 'config');
-    fs.mkdirSync(groupOpenCodeDir, { recursive: true });
-    fs.mkdirSync(groupOpenCodeStateDir, { recursive: true });
-    fs.mkdirSync(groupOpenCodeCacheDir, { recursive: true });
-    fs.mkdirSync(groupOpenCodeConfigDir, { recursive: true });
-    mounts.push({
-      hostPath: groupOpenCodeDir,
-      containerPath: OPENCODE_DATA_CONTAINER_PATH,
-      readonly: false,
-    });
-    mounts.push({
-      hostPath: groupOpenCodeStateDir,
-      containerPath: OPENCODE_STATE_CONTAINER_PATH,
-      readonly: false,
-    });
-    mounts.push({
-      hostPath: groupOpenCodeCacheDir,
-      containerPath: OPENCODE_CACHE_CONTAINER_PATH,
-      readonly: false,
-    });
-    mounts.push({
-      hostPath: groupOpenCodeConfigDir,
-      containerPath: OPENCODE_CONFIG_CONTAINER_PATH,
-      readonly: false,
-    });
+  // Per-group Claude sessions directory (isolated from other groups)
+  // Each group gets their own .claude/ to prevent cross-group session access
+  const groupSessionsDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.claude',
+  );
+  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  const settingsFile = path.join(groupSessionsDir, 'settings.json');
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(settingsFile, JSON.stringify({
+      env: {
+        // Enable agent swarms (subagent orchestration)
+        // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+        // Load CLAUDE.md from additional mounted directories
+        // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
+        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+        // Enable Claude's memory feature (persists user preferences between sessions)
+        // https://code.claude.com/docs/en/memory#manage-auto-memory
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+      },
+    }, null, 2) + '\n');
   }
+
+  // Sync skills from container/skills/ into each group's .claude/skills/
+  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  const skillsDst = path.join(groupSessionsDir, 'skills');
+  if (fs.existsSync(skillsSrc)) {
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      copyDirectoryRecursive(srcDir, dstDir);
+    }
+  }
+  mounts.push({
+    hostPath: groupSessionsDir,
+    containerPath: '/home/node/.claude',
+    readonly: false,
+  });
 
   // Main group only: optional Google Workspace CLI auth state.
   // Mounted from host so OAuth state persists across container runs.
@@ -265,7 +237,6 @@ function readSecrets(): Record<string, string> {
   return readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
-    'OPENROUTER_API_KEY',
     'OPEN_BRAIN_KEY',
     'GOOGLE_MAPS_API_KEY',
   ]);
@@ -277,10 +248,6 @@ function buildContainerArgs(
   isMain: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
-
-  args.push('-e', `AGENT_RUNTIME=${AGENT_RUNTIME}`);
-  args.push('-e', `DEFAULT_MODEL=${DEFAULT_MODEL}`);
-  args.push('-e', `FALLBACK_MODEL=${FALLBACK_MODEL}`);
 
   if (isMain) {
     args.push(
