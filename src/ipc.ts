@@ -23,6 +23,7 @@ import { logger } from './logger.js';
 import {
   inferClaudeModelFromPrompt,
   normalizeClaudeModel,
+  stripClaudeModelDirectives,
 } from './model-routing.js';
 import { formatMessages } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
@@ -396,12 +397,15 @@ export async function processTaskIpc(
           logger.warn({ model: data.model }, 'Invalid task model');
           break;
         }
-        const taskModel =
-          explicitTaskModel || inferClaudeModelFromPrompt(data.prompt);
+        const inferredTaskModel = inferClaudeModelFromPrompt(data.prompt);
+        const taskModel = explicitTaskModel || inferredTaskModel;
+        const basePrompt = taskModel
+          ? stripClaudeModelDirectives(data.prompt)
+          : data.prompt;
         const duplicateTask = findDuplicateTask({
           groupFolder: targetFolder,
           title: data.title || null,
-          prompt: data.prompt,
+          prompt: basePrompt,
           scheduleType,
           scheduleValue: data.schedule_value,
           contextMode,
@@ -414,7 +418,7 @@ export async function processTaskIpc(
           );
           break;
         }
-        const taskPrompt = buildStoredTaskPrompt(data.prompt, contextMode, targetJid);
+        const taskPrompt = buildStoredTaskPrompt(basePrompt, contextMode, targetJid);
 
         createTask({
           id: taskId,
@@ -490,11 +494,17 @@ export async function processTaskIpc(
           break;
         }
 
-        const basePrompt = data.prompt || stripSnapshotContext(task.prompt);
+        const rawBasePrompt = data.prompt || stripSnapshotContext(task.prompt);
+        const promptInferredModel =
+          data.prompt !== undefined ? inferClaudeModelFromPrompt(rawBasePrompt) : null;
+        const basePrompt =
+          data.prompt !== undefined && promptInferredModel
+            ? stripClaudeModelDirectives(rawBasePrompt)
+            : rawBasePrompt;
         const taskModel = data.model !== undefined
           ? (explicitTaskModel || null)
           : (data.prompt !== undefined
-            ? inferClaudeModelFromPrompt(basePrompt) || (task.model || null)
+            ? promptInferredModel || (task.model || null)
             : (task.model || null));
         const duplicateTask = findDuplicateTask({
           groupFolder: task.group_folder,

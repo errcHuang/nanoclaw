@@ -34,7 +34,10 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
-import { inferClaudeModelFromPrompt } from './model-routing.js';
+import {
+  inferClaudeModelFromPrompt,
+  stripClaudeModelDirectives,
+} from './model-routing.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
@@ -215,10 +218,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     resetGroupSession(group, 'stale');
   }
 
-  const prompt = formatMessages(messagesForPrompt);
-  const model = inferClaudeModelFromPrompt(
-    messagesForPrompt.map((message) => message.content).join('\n'),
-  ) || undefined;
+  const rawPromptText = messagesForPrompt.map((message) => message.content).join('\n');
+  const model = inferClaudeModelFromPrompt(rawPromptText) || undefined;
+  const promptMessages = model
+    ? messagesForPrompt.map((message) => ({
+        ...message,
+        content: stripClaudeModelDirectives(message.content),
+      }))
+    : messagesForPrompt;
+  const prompt = formatMessages(promptMessages);
   setLastAgentCursor(
     chatJid,
     messagesForPrompt[messagesForPrompt.length - 1].timestamp,

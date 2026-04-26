@@ -38,3 +38,8 @@ export function inferClaudeModelFromPrompt(prompt: string): string | null {
 
   return selectedAlias ? CLAUDE_MODELS[selectedAlias] : null;
 }
+
+export function stripClaudeModelDirectives(prompt: string): string {
+  MODEL_DIRECTIVE_PATTERN.lastIndex = 0;
+  return prompt.replace(MODEL_DIRECTIVE_PATTERN, '').replace(/\s+/g, ' ').trim();
+}

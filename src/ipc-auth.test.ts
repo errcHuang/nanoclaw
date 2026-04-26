@@ -411,7 +411,7 @@ describe('update_task authorization and behavior', () => {
     );
 
     const task = getTaskById('task-update')!;
-    expect(task.prompt).toBe('use sonnet for the revised task');
+    expect(task.prompt).toBe('for the revised task');
     expect(task.model).toBe('claude-sonnet-4-6');
   });
 
@@ -801,6 +801,7 @@ describe('schedule_task schedule types', () => {
 
     const tasks = getAllTasks();
     expect(tasks).toHaveLength(1);
+    expect(tasks[0].prompt).toBe('for this research task');
     expect(tasks[0].model).toBe('claude-opus-4-6');
   });
 
@@ -821,6 +822,7 @@ describe('schedule_task schedule types', () => {
 
     const tasks = getAllTasks();
     expect(tasks).toHaveLength(1);
+    expect(tasks[0].prompt).toBe('for this research task');
     expect(tasks[0].model).toBe('claude-sonnet-4-6');
   });
 

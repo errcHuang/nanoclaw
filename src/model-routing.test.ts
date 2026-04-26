@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   inferClaudeModelFromPrompt,
   normalizeClaudeModel,
+  stripClaudeModelDirectives,
 } from './model-routing.js';
 
 describe('model routing', () => {
@@ -30,5 +31,14 @@ describe('model routing', () => {
 
   it('returns null when no routing directive is present', () => {
     expect(inferClaudeModelFromPrompt('please answer normally')).toBeNull();
+  });
+
+  it('strips model directives from prompt text', () => {
+    expect(stripClaudeModelDirectives('use opus summarize this')).toBe(
+      'summarize this',
+    );
+    expect(stripClaudeModelDirectives('Please USE Sonnet for this')).toBe(
+      'Please for this',
+    );
   });
 });

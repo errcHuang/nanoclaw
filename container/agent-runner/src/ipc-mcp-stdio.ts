@@ -101,6 +101,11 @@ function inferModelFromPrompt(prompt: string): string | null {
   return selected;
 }
 
+function stripModelDirectives(prompt: string): string {
+  MODEL_DIRECTIVE_PATTERN.lastIndex = 0;
+  return prompt.replace(MODEL_DIRECTIVE_PATTERN, '').replace(/\s+/g, ' ').trim();
+}
+
 function normalizeTitle(title?: string): string | null {
   if (!title) return null;
   const normalized = title.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -201,7 +206,9 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         isError: true,
       };
     }
-    const resolvedModel = normalizedModel || inferModelFromPrompt(args.prompt);
+    const inferredModel = inferModelFromPrompt(args.prompt);
+    const resolvedModel = normalizedModel || inferredModel;
+    const prompt = resolvedModel ? stripModelDirectives(args.prompt) : args.prompt;
 
     // Validate schedule_value before writing IPC
     if (args.schedule_type === 'cron') {
@@ -237,7 +244,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     const duplicateTask = findDuplicateTask(visibleTasks, {
       chatJid: targetJid,
       title: args.title || null,
-      prompt: args.prompt,
+      prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'isolated',
@@ -256,7 +263,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     const data = {
       type: 'schedule_task',
       title: args.title,
-      prompt: args.prompt,
+      prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'isolated',
@@ -372,9 +379,13 @@ server.tool(
       }
     }
 
-    const nextPrompt = args.prompt || stripSnapshotContext(existingTask.prompt);
+    const rawNextPrompt = args.prompt || stripSnapshotContext(existingTask.prompt);
     const promptInferredModel =
-      args.prompt !== undefined ? inferModelFromPrompt(nextPrompt) : null;
+      args.prompt !== undefined ? inferModelFromPrompt(rawNextPrompt) : null;
+    const nextPrompt =
+      args.prompt !== undefined && promptInferredModel
+        ? stripModelDirectives(rawNextPrompt)
+        : rawNextPrompt;
     const resolvedModel = args.model !== undefined
       ? (normalizedModel || null)
       : (args.prompt !== undefined
@@ -408,7 +419,7 @@ server.tool(
       type: 'update_task',
       taskId: args.task_id,
       title: args.title,
-      prompt: args.prompt,
+      prompt: args.prompt !== undefined ? nextPrompt : undefined,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode,
