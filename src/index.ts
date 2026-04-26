@@ -410,6 +410,19 @@ async function startMessageLoop(): Promise<void> {
             continue;
           }
 
+          const requestedModel = inferClaudeModelFromPrompt(
+            messagesToSend.map((message) => message.content).join('\n'),
+          );
+
+          if (requestedModel && queue.isActive(chatJid)) {
+            queue.enqueueMessageCheck(chatJid);
+            logger.info(
+              { chatJid, model: requestedModel },
+              'Model-directed message queued for fresh container',
+            );
+            continue;
+          }
+
           const formatted = formatMessages(messagesToSend);
 
           if (queue.sendMessage(chatJid, formatted)) {
