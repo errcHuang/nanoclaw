@@ -605,6 +605,11 @@ async function main(): Promise<void> {
       // Emit session update so host can track it
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
 
+      if (containerInput.isScheduledTask) {
+        log('Scheduled task query completed, exiting without waiting for IPC');
+        break;
+      }
+
       log('Query ended, waiting for next IPC message...');
 
       // Wait for the next message or _close sentinel

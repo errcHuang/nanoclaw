@@ -416,9 +416,10 @@ async function startMessageLoop(): Promise<void> {
 
           if (requestedModel && queue.isActive(chatJid)) {
             queue.enqueueMessageCheck(chatJid);
+            queue.closeStdin(chatJid);
             logger.info(
               { chatJid, model: requestedModel },
-              'Model-directed message queued for fresh container',
+              'Model-directed message queued for fresh container; closing active container stdin',
             );
             continue;
           }
