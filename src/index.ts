@@ -34,6 +34,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
+import { inferClaudeModelFromPrompt } from './model-routing.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
@@ -215,6 +216,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const prompt = formatMessages(messagesForPrompt);
+  const model = inferClaudeModelFromPrompt(
+    messagesForPrompt.map((message) => message.content).join('\n'),
+  ) || undefined;
   setLastAgentCursor(
     chatJid,
     messagesForPrompt[messagesForPrompt.length - 1].timestamp,
@@ -241,7 +245,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(group, prompt, chatJid, model, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
@@ -285,11 +289,13 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  model?: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   return executeAgentRun({
     group,
     prompt,
+    model,
     chatJid,
     registeredGroups,
     sessions,

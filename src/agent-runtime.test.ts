@@ -108,6 +108,55 @@ describe('agent-runtime', () => {
     expect(writeGroupsSnapshot).toHaveBeenCalled();
   });
 
+  it('passes explicit model overrides to the container', async () => {
+    vi.mocked(runContainerAgent).mockResolvedValue({
+      status: 'success',
+      result: 'done',
+    });
+
+    await executeAgentRun({
+      group: registeredGroups['main@s.whatsapp.net'],
+      prompt: 'hello',
+      model: 'claude-sonnet-4-6',
+      chatJid: 'main@s.whatsapp.net',
+      registeredGroups,
+      sessions: {},
+    });
+
+    expect(runContainerAgent).toHaveBeenCalledWith(
+      registeredGroups['main@s.whatsapp.net'],
+      expect.objectContaining({
+        model: 'claude-sonnet-4-6',
+      }),
+      expect.any(Function),
+      undefined,
+    );
+  });
+
+  it('does not pass a model override by default', async () => {
+    vi.mocked(runContainerAgent).mockResolvedValue({
+      status: 'success',
+      result: 'done',
+    });
+
+    await executeAgentRun({
+      group: registeredGroups['main@s.whatsapp.net'],
+      prompt: 'hello',
+      chatJid: 'main@s.whatsapp.net',
+      registeredGroups,
+      sessions: {},
+    });
+
+    expect(runContainerAgent).toHaveBeenCalledWith(
+      registeredGroups['main@s.whatsapp.net'],
+      expect.objectContaining({
+        model: undefined,
+      }),
+      expect.any(Function),
+      undefined,
+    );
+  });
+
   it('does not persist sessions in stateless mode', async () => {
     vi.mocked(runContainerAgent).mockResolvedValue({
       status: 'success',

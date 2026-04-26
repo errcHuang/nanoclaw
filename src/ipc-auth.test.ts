@@ -398,6 +398,40 @@ describe('update_task authorization and behavior', () => {
     expect(getTaskById('task-update')!.prompt).toBe('own update');
   });
 
+  it('infers updated task model from prompt text when model is omitted', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-update',
+        prompt: 'use sonnet for the revised task',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const task = getTaskById('task-update')!;
+    expect(task.prompt).toBe('use sonnet for the revised task');
+    expect(task.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('keeps existing task model when updated prompt has no model directive', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-update',
+        prompt: 'revised task without routing',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const task = getTaskById('task-update')!;
+    expect(task.prompt).toBe('revised task without routing');
+    expect(task.model).toBe('claude-haiku-4-5');
+  });
+
   it('non-main group cannot update another group task', async () => {
     await processTaskIpc(
       {
@@ -736,6 +770,45 @@ describe('schedule_task schedule types', () => {
       {
         type: 'schedule_task',
         prompt: 'use sonnet',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        model: 'sonnet',
+        targetJid: 'other@g.us',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].model).toBe('claude-sonnet-4-6');
+  });
+
+  it('infers scheduled task model from prompt text when model is omitted', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'use opus for this research task',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        targetJid: 'other@g.us',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].model).toBe('claude-opus-4-6');
+  });
+
+  it('prefers explicit scheduled task model over prompt text', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'use opus for this research task',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00.000Z',
         model: 'sonnet',

@@ -15,6 +15,7 @@ import { RegisteredGroup } from './types.js';
 export interface ExecuteAgentRunOptions {
   group: RegisteredGroup;
   prompt: string;
+  model?: string;
   chatJid: string;
   registeredGroups: Record<string, RegisteredGroup>;
   sessions?: Record<string, string>;
@@ -66,6 +67,7 @@ export async function executeAgentRun(
   const {
     group,
     prompt,
+    model,
     chatJid,
     registeredGroups,
     sessions,
@@ -118,6 +120,7 @@ export async function executeAgentRun(
       group,
       {
         prompt,
+        model,
         sessionId,
         groupFolder: group.folder,
         chatJid,

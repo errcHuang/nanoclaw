@@ -17,6 +17,7 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const TASKS_FILE = path.join(IPC_DIR, 'current_tasks.json');
 const SNAPSHOT_CONTEXT_START = '[SNAPSHOT CONTEXT]';
 const SNAPSHOT_CONTEXT_END = '[/SNAPSHOT CONTEXT]';
+const MODEL_DIRECTIVE_PATTERN = /\buse[\s,:-]+(haiku|sonnet|opus)\b/gi;
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -86,6 +87,18 @@ function normalizeModel(model?: string): string | null {
   if (normalized === 'opus' || normalized === 'claude-opus-4-6') return 'claude-opus-4-6';
 
   return null;
+}
+
+function inferModelFromPrompt(prompt: string): string | null {
+  let match: RegExpExecArray | null;
+  let selected: string | null = null;
+
+  MODEL_DIRECTIVE_PATTERN.lastIndex = 0;
+  while ((match = MODEL_DIRECTIVE_PATTERN.exec(prompt)) !== null) {
+    selected = normalizeModel(match[1]);
+  }
+
+  return selected;
 }
 
 function normalizeTitle(title?: string): string | null {
@@ -188,6 +201,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         isError: true,
       };
     }
+    const resolvedModel = normalizedModel || inferModelFromPrompt(args.prompt);
 
     // Validate schedule_value before writing IPC
     if (args.schedule_type === 'cron') {
@@ -227,7 +241,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'isolated',
-      model: normalizedModel,
+      model: resolvedModel,
     });
     if (duplicateTask) {
       return {
@@ -246,7 +260,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'isolated',
-      model: normalizedModel || undefined,
+      model: resolvedModel || undefined,
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
@@ -255,7 +269,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     const filename = writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Task scheduled (${filename}): ${args.schedule_type} - ${args.schedule_value}${args.model ? ` using ${args.model}` : ''}` }],
+      content: [{ type: 'text' as const, text: `Task scheduled (${filename}): ${args.schedule_type} - ${args.schedule_value}${resolvedModel ? ` using ${resolvedModel}` : ''}` }],
     };
   },
 );
@@ -358,14 +372,26 @@ server.tool(
       }
     }
 
+    const nextPrompt = args.prompt || stripSnapshotContext(existingTask.prompt);
+    const promptInferredModel =
+      args.prompt !== undefined ? inferModelFromPrompt(nextPrompt) : null;
+    const resolvedModel = args.model !== undefined
+      ? (normalizedModel || null)
+      : (args.prompt !== undefined
+        ? promptInferredModel || (existingTask.model || null)
+        : (existingTask.model || null));
+    const outgoingModel = args.model !== undefined
+      ? (resolvedModel || undefined)
+      : (promptInferredModel || undefined);
+
     const duplicateTask = findDuplicateTask(tasks, {
       chatJid: existingTask.chatJid || chatJid,
       title: args.title !== undefined ? args.title : (existingTask.title || null),
-      prompt: args.prompt || stripSnapshotContext(existingTask.prompt),
+      prompt: nextPrompt,
       schedule_type: nextScheduleType,
       schedule_value: nextScheduleValue,
       context_mode: args.context_mode || existingTask.context_mode || 'isolated',
-      model: args.model !== undefined ? (normalizedModel || null) : (existingTask.model || null),
+      model: resolvedModel,
       excludeTaskId: args.task_id,
     });
     if (duplicateTask) {
@@ -386,7 +412,7 @@ server.tool(
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode,
-      model: normalizedModel,
+      model: outgoingModel,
       groupFolder,
       isMain,
       timestamp: new Date().toISOString(),

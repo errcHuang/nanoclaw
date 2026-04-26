@@ -20,6 +20,10 @@ import {
   updateTask,
 } from './db.js';
 import { logger } from './logger.js';
+import {
+  inferClaudeModelFromPrompt,
+  normalizeClaudeModel,
+} from './model-routing.js';
 import { formatMessages } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
@@ -43,25 +47,6 @@ const SNAPSHOT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const SNAPSHOT_MAX_MESSAGES = 50;
 const SNAPSHOT_CONTEXT_START = '[SNAPSHOT CONTEXT]';
 const SNAPSHOT_CONTEXT_END = '[/SNAPSHOT CONTEXT]';
-
-function normalizeClaudeModel(model: string | undefined): string | null {
-  if (!model) return null;
-
-  const normalized = model.trim().toLowerCase();
-  if (!normalized) return null;
-
-  if (normalized === 'haiku' || normalized === 'claude-haiku-4-5') {
-    return 'claude-haiku-4-5';
-  }
-  if (normalized === 'sonnet' || normalized === 'claude-sonnet-4-6') {
-    return 'claude-sonnet-4-6';
-  }
-  if (normalized === 'opus' || normalized === 'claude-opus-4-6') {
-    return 'claude-opus-4-6';
-  }
-
-  return null;
-}
 
 function normalizeTaskTitle(title: string | undefined): string | null {
   if (!title) return null;
@@ -406,11 +391,13 @@ export async function processTaskIpc(
 
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const contextMode = normalizeContextMode(data.context_mode);
-        const taskModel = normalizeClaudeModel(data.model);
-        if (data.model && !taskModel) {
+        const explicitTaskModel = normalizeClaudeModel(data.model);
+        if (data.model && !explicitTaskModel) {
           logger.warn({ model: data.model }, 'Invalid task model');
           break;
         }
+        const taskModel =
+          explicitTaskModel || inferClaudeModelFromPrompt(data.prompt);
         const duplicateTask = findDuplicateTask({
           groupFolder: targetFolder,
           title: data.title || null,
@@ -483,10 +470,10 @@ export async function processTaskIpc(
         const scheduleType = (data.schedule_type || task.schedule_type) as 'cron' | 'interval' | 'once';
         const scheduleValue = data.schedule_value || task.schedule_value;
         const contextMode = normalizeContextMode(data.context_mode || task.context_mode);
-        const taskModel = data.model !== undefined
+        const explicitTaskModel = data.model !== undefined
           ? normalizeClaudeModel(data.model)
-          : (task.model || null);
-        if (data.model !== undefined && data.model && !taskModel) {
+          : undefined;
+        if (data.model !== undefined && data.model && !explicitTaskModel) {
           logger.warn({ model: data.model }, 'Invalid task model');
           break;
         }
@@ -504,6 +491,11 @@ export async function processTaskIpc(
         }
 
         const basePrompt = data.prompt || stripSnapshotContext(task.prompt);
+        const taskModel = data.model !== undefined
+          ? (explicitTaskModel || null)
+          : (data.prompt !== undefined
+            ? inferClaudeModelFromPrompt(basePrompt) || (task.model || null)
+            : (task.model || null));
         const duplicateTask = findDuplicateTask({
           groupFolder: task.group_folder,
           title: data.title !== undefined ? data.title : (task.title || null),
