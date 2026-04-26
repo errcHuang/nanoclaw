@@ -53,6 +53,10 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
+export const DEFAULT_CLAUDE_MODEL =
+  process.env.DEFAULT_CLAUDE_MODEL || 'claude-haiku-4-5';
+export const DEFAULT_CLAUDE_FALLBACK_MODEL =
+  process.env.DEFAULT_CLAUDE_FALLBACK_MODEL || 'claude-sonnet-4-6';
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

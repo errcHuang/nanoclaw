@@ -21,7 +21,7 @@ import {
 } from './db.js';
 import { logger } from './logger.js';
 import { formatMessages } from './router.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -41,13 +41,135 @@ let ipcWatcherRunning = false;
 
 const SNAPSHOT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const SNAPSHOT_MAX_MESSAGES = 50;
+const SNAPSHOT_CONTEXT_START = '[SNAPSHOT CONTEXT]';
+const SNAPSHOT_CONTEXT_END = '[/SNAPSHOT CONTEXT]';
+
+function normalizeClaudeModel(model: string | undefined): string | null {
+  if (!model) return null;
+
+  const normalized = model.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === 'haiku' || normalized === 'claude-haiku-4-5') {
+    return 'claude-haiku-4-5';
+  }
+  if (normalized === 'sonnet' || normalized === 'claude-sonnet-4-6') {
+    return 'claude-sonnet-4-6';
+  }
+  if (normalized === 'opus' || normalized === 'claude-opus-4-6') {
+    return 'claude-opus-4-6';
+  }
+
+  return null;
+}
+
+function normalizeTaskTitle(title: string | undefined): string | null {
+  if (!title) return null;
+  const normalized = title.replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalized || null;
+}
+
+function stripSnapshotContext(prompt: string): string {
+  const start = prompt.indexOf(SNAPSHOT_CONTEXT_START);
+  if (start === -1) return prompt.trim();
+
+  const end = prompt.indexOf(SNAPSHOT_CONTEXT_END, start);
+  if (end === -1) return prompt.slice(0, start).trim();
+
+  return `${prompt.slice(0, start)}${prompt.slice(end + SNAPSHOT_CONTEXT_END.length)}`.trim();
+}
+
+function normalizePromptForComparison(prompt: string): string {
+  return stripSnapshotContext(prompt).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function normalizeContextMode(
+  contextMode: string | undefined,
+): 'group' | 'isolated' | 'snapshot' {
+  return contextMode === 'group' ||
+    contextMode === 'isolated' ||
+    contextMode === 'snapshot'
+    ? contextMode
+    : 'isolated';
+}
+
+function computeNextRun(
+  scheduleType: 'cron' | 'interval' | 'once',
+  scheduleValue: string,
+): string | null {
+  if (scheduleType === 'cron') {
+    const interval = CronExpressionParser.parse(scheduleValue, {
+      tz: TIMEZONE,
+    });
+    return interval.next().toISOString();
+  }
+
+  if (scheduleType === 'interval') {
+    const ms = parseInt(scheduleValue, 10);
+    if (isNaN(ms) || ms <= 0) {
+      throw new Error('Invalid interval');
+    }
+    return new Date(Date.now() + ms).toISOString();
+  }
+
+  const scheduled = new Date(scheduleValue);
+  if (isNaN(scheduled.getTime())) {
+    throw new Error('Invalid timestamp');
+  }
+  return scheduled.toISOString();
+}
+
+function buildStoredTaskPrompt(
+  prompt: string,
+  contextMode: 'group' | 'isolated' | 'snapshot',
+  targetJid: string,
+): string {
+  return contextMode === 'snapshot'
+    ? buildSnapshotPrompt(prompt, targetJid)
+    : prompt;
+}
+
+function findDuplicateTask(params: {
+  groupFolder: string;
+  title?: string | null;
+  prompt: string;
+  scheduleType: 'cron' | 'interval' | 'once';
+  scheduleValue: string;
+  contextMode: 'group' | 'isolated' | 'snapshot';
+  model: string | null;
+  excludeTaskId?: string;
+}): ScheduledTask | undefined {
+  const normalizedTitle = normalizeTaskTitle(params.title || undefined);
+  const normalizedPrompt = normalizePromptForComparison(params.prompt);
+
+  return getAllTasks().find((task) =>
+    task.id !== params.excludeTaskId &&
+    task.group_folder === params.groupFolder &&
+    task.status !== 'completed' &&
+    (
+      (normalizedTitle && normalizeTaskTitle(task.title || undefined) === normalizedTitle) ||
+      (
+        !normalizedTitle &&
+        task.schedule_type === params.scheduleType &&
+        task.schedule_value === params.scheduleValue &&
+        task.context_mode === params.contextMode &&
+        (task.model || null) === params.model &&
+        normalizePromptForComparison(task.prompt) === normalizedPrompt
+      )
+    ),
+  );
+}
 
 function refreshTaskSnapshots(deps: IpcDeps): void {
   const tasks = getAllTasks();
   const snapshot = tasks.map((task) => ({
     id: task.id,
+    chatJid: task.chat_jid,
     groupFolder: task.group_folder,
+    title: task.title,
     prompt: task.prompt,
+    model: task.model,
+    context_mode: task.context_mode,
     schedule_type: task.schedule_type,
     schedule_value: task.schedule_value,
     status: task.status,
@@ -219,6 +341,9 @@ export async function processTaskIpc(
     schedule_type?: string;
     schedule_value?: string;
     context_mode?: string;
+    title?: string;
+    model?: string;
+    next_run?: string | null;
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
@@ -268,60 +393,49 @@ export async function processTaskIpc(
         }
 
         const scheduleType = data.schedule_type as 'cron' | 'interval' | 'once';
-
         let nextRun: string | null = null;
-        if (scheduleType === 'cron') {
-          try {
-            const interval = CronExpressionParser.parse(data.schedule_value, {
-              tz: TIMEZONE,
-            });
-            nextRun = interval.next().toISOString();
-          } catch {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid cron expression',
-            );
-            break;
-          }
-        } else if (scheduleType === 'interval') {
-          const ms = parseInt(data.schedule_value, 10);
-          if (isNaN(ms) || ms <= 0) {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid interval',
-            );
-            break;
-          }
-          nextRun = new Date(Date.now() + ms).toISOString();
-        } else if (scheduleType === 'once') {
-          const scheduled = new Date(data.schedule_value);
-          if (isNaN(scheduled.getTime())) {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid timestamp',
-            );
-            break;
-          }
-          nextRun = scheduled.toISOString();
+        try {
+          nextRun = computeNextRun(scheduleType, data.schedule_value);
+        } catch (err) {
+          logger.warn(
+            { scheduleValue: data.schedule_value, error: err instanceof Error ? err.message : String(err) },
+            'Invalid schedule for task',
+          );
+          break;
         }
 
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const contextMode =
-          data.context_mode === 'group' ||
-          data.context_mode === 'isolated' ||
-          data.context_mode === 'snapshot'
-            ? data.context_mode
-            : 'isolated';
-        const taskPrompt =
-          contextMode === 'snapshot'
-            ? buildSnapshotPrompt(data.prompt, targetJid)
-            : data.prompt;
+        const contextMode = normalizeContextMode(data.context_mode);
+        const taskModel = normalizeClaudeModel(data.model);
+        if (data.model && !taskModel) {
+          logger.warn({ model: data.model }, 'Invalid task model');
+          break;
+        }
+        const duplicateTask = findDuplicateTask({
+          groupFolder: targetFolder,
+          title: data.title || null,
+          prompt: data.prompt,
+          scheduleType,
+          scheduleValue: data.schedule_value,
+          contextMode,
+          model: taskModel,
+        });
+        if (duplicateTask) {
+          logger.info(
+            { existingTaskId: duplicateTask.id, sourceGroup, targetFolder },
+            'Duplicate scheduled task ignored via IPC',
+          );
+          break;
+        }
+        const taskPrompt = buildStoredTaskPrompt(data.prompt, contextMode, targetJid);
 
         createTask({
           id: taskId,
           group_folder: targetFolder,
           chat_jid: targetJid,
+          title: data.title || null,
           prompt: taskPrompt,
+          model: taskModel,
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,
           context_mode: contextMode,
@@ -334,6 +448,7 @@ export async function processTaskIpc(
             taskId,
             sourceGroup,
             targetFolder,
+            model: taskModel || 'default',
             requestedContextMode: data.context_mode || 'unspecified',
             contextMode,
             snapshotMessages:
@@ -349,6 +464,81 @@ export async function processTaskIpc(
                 : 0,
           },
           'Task created via IPC',
+        );
+        refreshTaskSnapshots(deps);
+      }
+      break;
+
+    case 'update_task':
+      if (data.taskId) {
+        const task = getTaskById(data.taskId);
+        if (!task || (!isMain && task.group_folder !== sourceGroup)) {
+          logger.warn(
+            { taskId: data.taskId, sourceGroup },
+            'Unauthorized task update attempt',
+          );
+          break;
+        }
+
+        const scheduleType = (data.schedule_type || task.schedule_type) as 'cron' | 'interval' | 'once';
+        const scheduleValue = data.schedule_value || task.schedule_value;
+        const contextMode = normalizeContextMode(data.context_mode || task.context_mode);
+        const taskModel = data.model !== undefined
+          ? normalizeClaudeModel(data.model)
+          : (task.model || null);
+        if (data.model !== undefined && data.model && !taskModel) {
+          logger.warn({ model: data.model }, 'Invalid task model');
+          break;
+        }
+        let nextRun: string | null;
+        try {
+          nextRun = data.next_run !== undefined
+            ? data.next_run
+            : computeNextRun(scheduleType, scheduleValue);
+        } catch (err) {
+          logger.warn(
+            { taskId: data.taskId, scheduleValue, error: err instanceof Error ? err.message : String(err) },
+            'Invalid schedule for task update',
+          );
+          break;
+        }
+
+        const basePrompt = data.prompt || stripSnapshotContext(task.prompt);
+        const duplicateTask = findDuplicateTask({
+          groupFolder: task.group_folder,
+          title: data.title !== undefined ? data.title : (task.title || null),
+          prompt: basePrompt,
+          scheduleType,
+          scheduleValue,
+          contextMode,
+          model: taskModel,
+          excludeTaskId: task.id,
+        });
+        if (duplicateTask) {
+          logger.info(
+            { taskId: task.id, existingTaskId: duplicateTask.id },
+            'Duplicate task update ignored via IPC',
+          );
+          break;
+        }
+
+        updateTask(data.taskId, {
+          title: data.title !== undefined ? data.title || null : undefined,
+          prompt: buildStoredTaskPrompt(basePrompt, contextMode, task.chat_jid),
+          model: taskModel,
+          schedule_type: scheduleType,
+          schedule_value: scheduleValue,
+          context_mode: contextMode,
+          next_run: nextRun,
+        });
+        logger.info(
+          {
+            taskId: data.taskId,
+            sourceGroup,
+            model: taskModel || 'default',
+            contextMode,
+          },
+          'Task updated via IPC',
         );
         refreshTaskSnapshots(deps);
       }

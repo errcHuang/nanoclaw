@@ -32,7 +32,9 @@ function createSchema(database: Database.Database): void {
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
+      title TEXT,
       prompt TEXT NOT NULL,
+      model TEXT,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
       next_run TEXT,
@@ -80,6 +82,18 @@ function createSchema(database: Database.Database): void {
     database.exec(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
     );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN model TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN title TEXT`);
   } catch {
     /* column already exists */
   }
@@ -302,14 +316,16 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, title, prompt, model, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
     task.group_folder,
     task.chat_jid,
+    task.title || null,
     task.prompt,
+    task.model || null,
     task.schedule_type,
     task.schedule_value,
     task.context_mode || 'isolated',
@@ -344,7 +360,14 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      | 'prompt'
+      | 'title'
+      | 'model'
+      | 'schedule_type'
+      | 'schedule_value'
+      | 'context_mode'
+      | 'next_run'
+      | 'status'
     >
   >,
 ): void {
@@ -355,6 +378,14 @@ export function updateTask(
     fields.push('prompt = ?');
     values.push(updates.prompt);
   }
+  if (updates.title !== undefined) {
+    fields.push('title = ?');
+    values.push(updates.title);
+  }
+  if (updates.model !== undefined) {
+    fields.push('model = ?');
+    values.push(updates.model);
+  }
   if (updates.schedule_type !== undefined) {
     fields.push('schedule_type = ?');
     values.push(updates.schedule_type);
@@ -362,6 +393,10 @@ export function updateTask(
   if (updates.schedule_value !== undefined) {
     fields.push('schedule_value = ?');
     values.push(updates.schedule_value);
+  }
+  if (updates.context_mode !== undefined) {
+    fields.push('context_mode = ?');
+    values.push(updates.context_mode);
   }
   if (updates.next_run !== undefined) {
     fields.push('next_run = ?');

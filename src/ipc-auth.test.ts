@@ -190,6 +190,76 @@ describe('schedule_task authorization', () => {
       expect.any(Array),
     );
   });
+
+  it('rejects duplicate scheduled tasks with the same prompt, schedule, context, and model', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'self task',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        context_mode: 'isolated',
+        model: 'sonnet',
+        targetJid: 'other@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'self task',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        context_mode: 'isolated',
+        model: 'claude-sonnet-4-6',
+        targetJid: 'other@g.us',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    const allTasks = getAllTasks();
+    expect(allTasks).toHaveLength(1);
+    expect(allTasks[0].model).toBe('claude-sonnet-4-6');
+  });
+
+  it('rejects duplicate titled tasks even when the prompt differs', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        title: 'daily weather',
+        prompt: 'first prompt',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        targetJid: 'other@g.us',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        title: 'Daily   Weather',
+        prompt: 'different wording',
+        schedule_type: 'cron',
+        schedule_value: '0 9 * * *',
+        targetJid: 'other@g.us',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const allTasks = getAllTasks();
+    expect(allTasks).toHaveLength(1);
+    expect(allTasks[0].title).toBe('daily weather');
+  });
 });
 
 // --- pause_task authorization ---
@@ -269,6 +339,112 @@ describe('resume_task authorization', () => {
   it('non-main group cannot resume another groups task', async () => {
     await processTaskIpc({ type: 'resume_task', taskId: 'task-paused' }, 'third-group', false, deps);
     expect(getTaskById('task-paused')!.status).toBe('paused');
+  });
+});
+
+describe('update_task authorization and behavior', () => {
+  beforeEach(() => {
+    createTask({
+      id: 'task-update',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'original prompt',
+      model: 'claude-haiku-4-5',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('main group can update any task', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-update',
+        title: 'weekly review',
+        prompt: 'updated prompt',
+        model: 'sonnet',
+        schedule_type: 'cron',
+        schedule_value: '0 9 * * *',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const task = getTaskById('task-update')!;
+    expect(task.title).toBe('weekly review');
+    expect(task.prompt).toBe('updated prompt');
+    expect(task.model).toBe('claude-sonnet-4-6');
+    expect(task.schedule_type).toBe('cron');
+    expect(task.schedule_value).toBe('0 9 * * *');
+  });
+
+  it('non-main group can update its own task', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-update',
+        prompt: 'own update',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(getTaskById('task-update')!.prompt).toBe('own update');
+  });
+
+  it('non-main group cannot update another group task', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-update',
+        prompt: 'bad update',
+      },
+      'third-group',
+      false,
+      deps,
+    );
+
+    expect(getTaskById('task-update')!.prompt).toBe('original prompt');
+  });
+
+  it('rejects updates that would duplicate an existing task', async () => {
+    createTask({
+      id: 'task-existing',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'target prompt',
+      model: 'claude-sonnet-4-6',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:01.000Z',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-update',
+        prompt: 'target prompt',
+        model: 'sonnet',
+        schedule_type: 'cron',
+        schedule_value: '0 9 * * *',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const task = getTaskById('task-update')!;
+    expect(task.prompt).toBe('original prompt');
+    expect(task.schedule_type).toBe('once');
   });
 });
 
@@ -545,6 +721,44 @@ describe('schedule_task schedule types', () => {
         prompt: 'bad once',
         schedule_type: 'once',
         schedule_value: 'not-a-date',
+        targetJid: 'other@g.us',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    expect(getAllTasks()).toHaveLength(0);
+  });
+
+  it('normalizes scheduled task model aliases to canonical Claude model names', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'use sonnet',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        model: 'sonnet',
+        targetJid: 'other@g.us',
+      },
+      'main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].model).toBe('claude-sonnet-4-6');
+  });
+
+  it('rejects invalid scheduled task model names', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'bad model',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        model: 'claude-super-smart',
         targetJid: 'other@g.us',
       },
       'main',

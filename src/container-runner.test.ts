@@ -16,6 +16,8 @@ vi.mock('./config.js', () => ({
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/nanoclaw-test-data',
+  DEFAULT_CLAUDE_FALLBACK_MODEL: 'claude-sonnet-4-6',
+  DEFAULT_CLAUDE_MODEL: 'claude-haiku-4-5',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
 }));
@@ -266,6 +268,26 @@ describe('container-runner timeout behavior', () => {
     expect(spawnArgs).toContain('GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/workspace/gws');
     expect(spawnArgs).toContain(
       'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/workspace/gws/credentials.json',
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('passes default and fallback Claude model env vars into the container', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    const mockedSpawn = vi.mocked(spawn);
+    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
+    expect(spawnArgs).toContain('DEFAULT_CLAUDE_MODEL=claude-haiku-4-5');
+    expect(spawnArgs).toContain(
+      'DEFAULT_CLAUDE_FALLBACK_MODEL=claude-sonnet-4-6',
     );
 
     fakeProc.emit('close', 0);

@@ -12,6 +12,8 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
+  DEFAULT_CLAUDE_FALLBACK_MODEL,
+  DEFAULT_CLAUDE_MODEL,
   GROUPS_DIR,
   IDLE_TIMEOUT,
 } from './config.js';
@@ -37,6 +39,7 @@ function getHomeDir(): string {
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  model?: string;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
@@ -248,6 +251,13 @@ function buildContainerArgs(
   isMain: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  args.push(
+    '-e',
+    `DEFAULT_CLAUDE_MODEL=${DEFAULT_CLAUDE_MODEL}`,
+    '-e',
+    `DEFAULT_CLAUDE_FALLBACK_MODEL=${DEFAULT_CLAUDE_FALLBACK_MODEL}`,
+  );
 
   if (isMain) {
     args.push(
@@ -657,8 +667,12 @@ export function writeTasksSnapshot(
   isMain: boolean,
   tasks: Array<{
     id: string;
+    chatJid?: string;
     groupFolder: string;
+    title?: string | null;
     prompt: string;
+    model?: string | null;
+    context_mode?: string;
     schedule_type: string;
     schedule_value: string;
     status: string;

@@ -22,6 +22,7 @@ import { fileURLToPath } from 'url';
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  model?: string;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
@@ -57,6 +58,9 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const DEFAULT_MODEL = process.env.DEFAULT_CLAUDE_MODEL || 'claude-haiku-4-5';
+const DEFAULT_FALLBACK_MODEL =
+  process.env.DEFAULT_CLAUDE_FALLBACK_MODEL || 'claude-sonnet-4-6';
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -368,6 +372,9 @@ async function runQuery(
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
+  const model = containerInput.model || DEFAULT_MODEL;
+  const fallbackModel =
+    model === DEFAULT_FALLBACK_MODEL ? undefined : DEFAULT_FALLBACK_MODEL;
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -472,6 +479,8 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      model,
+      fallbackModel,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,

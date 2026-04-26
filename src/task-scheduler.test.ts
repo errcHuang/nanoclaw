@@ -62,6 +62,7 @@ const baseTask: ScheduledTask = {
   group_folder: 'test-group',
   chat_jid: 'test@g.us',
   prompt: 'Send the daily reminder.',
+  model: null,
   schedule_type: 'once',
   schedule_value: '2026-03-10T09:00:00.000Z',
   context_mode: 'isolated',
@@ -208,6 +209,7 @@ describe('task-scheduler', () => {
       group,
       expect.objectContaining({
         prompt: baseTask.prompt,
+        model: undefined,
         sessionId: undefined,
         groupFolder: baseTask.group_folder,
         chatJid: baseTask.chat_jid,
@@ -292,9 +294,51 @@ describe('task-scheduler', () => {
       group,
       expect.objectContaining({
         prompt: baseTask.prompt,
+        model: undefined,
         sessionId: 'session-123',
         groupFolder: baseTask.group_folder,
         chatJid: baseTask.chat_jid,
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
+
+  it('passes through an explicit scheduled task model override', async () => {
+    const modeledTask = {
+      ...baseTask,
+      model: 'claude-opus-4-6',
+    };
+    mockGetDueTasks.mockReturnValueOnce([modeledTask]).mockReturnValue([]);
+    mockGetTaskById.mockReturnValueOnce(modeledTask);
+
+    const queuedFns: Array<() => Promise<void>> = [];
+    const queue = {
+      enqueueTask: vi.fn(
+        (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+          queuedFns.push(fn);
+        },
+      ),
+      closeStdin: vi.fn(),
+    };
+
+    const { startSchedulerLoop } = await import('./task-scheduler.js');
+    startSchedulerLoop({
+      registeredGroups: () => ({ [baseTask.chat_jid]: group }),
+      getSessions: () => ({}),
+      queue: queue as any,
+      onProcess: () => {},
+      sendMessage: vi.fn(async () => {}),
+    });
+
+    expect(queuedFns).toHaveLength(1);
+
+    await queuedFns[0]();
+
+    expect(mockRunContainerAgent).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        model: 'claude-opus-4-6',
       }),
       expect.any(Function),
       expect.any(Function),

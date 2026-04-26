@@ -308,6 +308,24 @@ describe('task CRUD', () => {
     expect(getTaskById('task-2')!.status).toBe('paused');
   });
 
+  it('stores an optional task model override', () => {
+    createTask({
+      id: 'task-model',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'use opus',
+      model: 'claude-opus-4-6',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    expect(getTaskById('task-model')!.model).toBe('claude-opus-4-6');
+  });
+
   it('deletes a task and its run logs', () => {
     createTask({
       id: 'task-3',

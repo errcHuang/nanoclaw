@@ -83,8 +83,12 @@ export async function executeAgentRun(
     isMain,
     tasks.map((t) => ({
       id: t.id,
+      chatJid: t.chat_jid,
       groupFolder: t.group_folder,
+      title: t.title,
       prompt: t.prompt,
+      model: t.model,
+      context_mode: t.context_mode,
       schedule_type: t.schedule_type,
       schedule_value: t.schedule_value,
       status: t.status,
