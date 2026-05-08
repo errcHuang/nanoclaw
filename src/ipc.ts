@@ -25,7 +25,7 @@ import {
   normalizeClaudeModel,
   stripClaudeModelDirectives,
 } from './model-routing.js';
-import { formatMessages } from './router.js';
+import { formatMessages, formatOutbound } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface IpcDeps {
@@ -246,11 +246,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
-                  logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
-                  );
+                  const text = formatOutbound(data.text);
+                  if (text) {
+                    await deps.sendMessage(data.chatJid, text);
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC message sent',
+                    );
+                  } else {
+                    logger.debug(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'Skipping internal-only IPC message',
+                    );
+                  }
                 } else {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },

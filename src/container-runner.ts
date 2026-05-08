@@ -245,12 +245,17 @@ function readSecrets(): Record<string, string> {
   ]);
 }
 
+function readContainerEnv(): Record<string, string> {
+  return readEnvFile(['ONECLI_URL']);
+}
+
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   isMain: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const containerEnv = readContainerEnv();
 
   args.push(
     '-e',
@@ -258,6 +263,10 @@ function buildContainerArgs(
     '-e',
     `DEFAULT_CLAUDE_FALLBACK_MODEL=${DEFAULT_CLAUDE_FALLBACK_MODEL}`,
   );
+
+  if (containerEnv.ONECLI_URL) {
+    args.push('-e', `ONECLI_URL=${containerEnv.ONECLI_URL}`);
+  }
 
   if (isMain) {
     args.push(

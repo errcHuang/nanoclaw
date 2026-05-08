@@ -85,6 +85,12 @@ Privacy and data handling:
 - Store only what is necessary for future usefulness or system integrity.
 - Keep structured domains in their designated tools or files so updates remain consistent and traceable.
 
+Codex workflow boundary:
+- NanoClaw's default execution runtime is Claude Agent SDK, not Codex.
+- Treat Codex as an optional external, repo-local coding workflow when the user explicitly wants Codex-oriented help.
+- Do not claim Codex execution support inside NanoClaw containers or chat agents unless the repo has been explicitly wired for that.
+- When discussing Codex, clearly distinguish advisory documentation and local developer workflows from built-in NanoClaw capabilities.
+
 ## AVAILABLE TOOLS
 
 - Bash: run shell commands inside the agent container.

@@ -30,6 +30,11 @@ claude
 
 Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
 
+If you also use Codex locally, run `/add-codex` to document that workflow in your
+fork. That skill does not change NanoClaw's runtime; it just teaches the repo
+when Codex is an external coding tool versus when Claude Code remains the actual
+agent harness.
+
 ## Philosophy
 
 **Small enough to understand.** One process, a few source files. No microservices, no message queues, no abstraction layers. Have Claude Code walk you through it.
@@ -45,6 +50,10 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 **Skills over features.** Contributors shouldn't add features (e.g. support for Telegram) to the codebase. Instead, they contribute [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
 
 **Best harness, best model.** This runs on Claude Agent SDK, which means you're running Claude Code directly. The harness matters. A bad harness makes even smart models seem dumb, a good harness gives them superpowers. Claude Code is (IMO) the best harness available.
+
+**Codex is optional and external.** If you use Codex in this repository, treat it
+as a local development assistant unless you deliberately add runtime integration.
+NanoClaw itself still runs on Claude Agent SDK by default.
 
 ## What It Supports
 
@@ -86,6 +95,9 @@ There are no configuration files to learn. Just tell Claude Code what you want:
 Or run `/customize` for guided changes.
 
 The codebase is small enough that Claude can safely modify it.
+
+If you prefer to use Codex for local code changes or code review in your fork,
+run `/add-codex` so the repo guidance stays explicit about those boundaries.
 
 ## Contributing
 

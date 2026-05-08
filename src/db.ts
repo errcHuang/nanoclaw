@@ -12,7 +12,9 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS chats (
       jid TEXT PRIMARY KEY,
       name TEXT,
-      last_message_time TEXT
+      last_message_time TEXT,
+      channel TEXT,
+      is_group INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT,
@@ -110,6 +112,36 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add chat metadata columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
+  } catch {
+    /* column already exists */
+  }
+
+  // Backfill chat channel/group shape from JID patterns.
+  database.exec(
+    `UPDATE chats SET channel = 'whatsapp', is_group = 1
+     WHERE channel IS NULL AND jid LIKE '%@g.us'`,
+  );
+  database.exec(
+    `UPDATE chats SET channel = 'whatsapp', is_group = 0
+     WHERE channel IS NULL AND jid LIKE '%@s.whatsapp.net'`,
+  );
+  database.exec(
+    `UPDATE chats SET channel = 'telegram', is_group = 0
+     WHERE channel IS NULL AND jid LIKE 'tg:%'`,
+  );
+  database.exec(
+    `UPDATE chats SET channel = 'discord', is_group = 1
+     WHERE channel IS NULL AND jid LIKE 'dc:%'`,
+  );
 }
 
 export function initDatabase(): void {
@@ -127,6 +159,11 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
+}
+
+/** @internal - for tests only. */
+export function _closeDatabase(): void {
+  db.close();
 }
 
 /**
@@ -178,6 +215,8 @@ export interface ChatInfo {
   jid: string;
   name: string;
   last_message_time: string;
+  channel?: string | null;
+  is_group?: number | null;
 }
 
 /**
@@ -188,6 +227,7 @@ export function getAllChats(): ChatInfo[] {
     .prepare(
       `
     SELECT jid, name, last_message_time
+         , channel, is_group
     FROM chats
     ORDER BY last_message_time DESC
   `,

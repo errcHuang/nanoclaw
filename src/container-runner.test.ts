@@ -295,6 +295,30 @@ describe('container-runner timeout behavior', () => {
     await resultPromise;
   });
 
+  it('passes ONECLI_URL into the container when configured', async () => {
+    vi.mocked(readEnvFile).mockImplementation((keys: string[]) => {
+      if (keys.length === 1 && keys[0] === 'ONECLI_URL') {
+        return { ONECLI_URL: 'http://172.17.0.1:10254' };
+      }
+      return {} as Record<string, string>;
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    const mockedSpawn = vi.mocked(spawn);
+    const spawnArgs = mockedSpawn.mock.calls.at(-1)?.[1] as string[];
+    expect(spawnArgs).toContain('ONECLI_URL=http://172.17.0.1:10254');
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
   it('mounts ~/obsidian-vault into every container when present', async () => {
     const home = process.env.HOME || '/tmp';
     const obsidianVaultDir = `${home}/obsidian-vault`;

@@ -177,6 +177,57 @@ describe('task-scheduler', () => {
     );
   });
 
+  it('does not send or save internal-only streamed task output', async () => {
+    mockGetDueTasks.mockReturnValueOnce([baseTask]).mockReturnValue([]);
+    mockRunContainerAgent.mockImplementation(
+      async (
+        _group: RegisteredGroup,
+        _input: unknown,
+        _onProcess: unknown,
+        onOutput?: (output: { status: 'success' | 'error'; result: string | null }) => Promise<void>,
+      ) => {
+        if (onOutput) {
+          await onOutput({
+            status: 'success',
+            result: '<internal>\nChecking email before sending the summary.\n</internal>',
+          });
+        }
+        return { status: 'success', result: null };
+      },
+    );
+
+    const queuedFns: Array<() => Promise<void>> = [];
+    const queue = {
+      enqueueTask: vi.fn(
+        (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+          queuedFns.push(fn);
+        },
+      ),
+      closeStdin: vi.fn(),
+    };
+    const sendMessage = vi.fn(async () => {});
+
+    const { startSchedulerLoop } = await import('./task-scheduler.js');
+    startSchedulerLoop({
+      registeredGroups: () => ({ [baseTask.chat_jid]: group }),
+      getSessions: () => ({}),
+      queue: queue as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    expect(queuedFns).toHaveLength(1);
+
+    await queuedFns[0]();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(mockUpdateTaskAfterRun).toHaveBeenCalledWith(
+      baseTask.id,
+      null,
+      'Completed',
+    );
+  });
+
   it('runs isolated tasks without resuming a group session', async () => {
     const isolatedTask = { ...baseTask, context_mode: 'isolated' as const };
     mockGetDueTasks.mockReturnValueOnce([isolatedTask]).mockReturnValue([]);

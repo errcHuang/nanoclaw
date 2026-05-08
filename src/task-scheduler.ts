@@ -20,6 +20,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
+import { formatOutbound } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
@@ -125,16 +126,21 @@ async function runTask(
       (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
-          result = streamedOutput.result;
-          if (streamedOutput.result !== lastDeliveredResult) {
+          const visibleResult = formatOutbound(streamedOutput.result);
+          if (visibleResult) {
+            result = visibleResult;
+          }
+          if (visibleResult && visibleResult !== lastDeliveredResult) {
             // Forward the latest agent result to the user. Duplicate
             // consecutive result markers can happen during resume flows.
-            await deps.sendMessage(task.chat_jid, streamedOutput.result);
-            lastDeliveredResult = streamedOutput.result;
+            await deps.sendMessage(task.chat_jid, visibleResult);
+            lastDeliveredResult = visibleResult;
           } else {
             logger.debug(
               { taskId: task.id },
-              'Skipping duplicate scheduled task output',
+              visibleResult
+                ? 'Skipping duplicate scheduled task output'
+                : 'Skipping internal-only scheduled task output',
             );
           }
           // Only reset idle timer on actual results, not session-update markers
@@ -152,7 +158,7 @@ async function runTask(
       error = output.error || 'Unknown error';
     } else if (output.result) {
       // Messages are sent via MCP tool (IPC), result text is just logged
-      result = output.result;
+      result = formatOutbound(output.result) || result;
     }
 
     logger.info(
