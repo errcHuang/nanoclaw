@@ -25,17 +25,34 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
+# Install GitHub CLI (gh)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/* \
+    && gh --version
+
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser, claude-code, and Google Workspace CLI globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code @googleworkspace/cli@0.8.0 \
-    && gws --version
+# Install agent-browser, claude-code, Google Workspace CLI, and OpenAI Codex globally
+RUN npm install -g agent-browser @anthropic-ai/claude-code @googleworkspace/cli@0.8.0 @openai/codex \
+    && gws --version \
+    && codex --version
 
 # Install OneCLI CLI for gateway-backed credential injection
 RUN curl -fsSL https://onecli.sh/cli/install | sh \
     && onecli version
+
+# Install git push wrapper (Layer C: blocks git push and force flags from non-root user)
+# Real git stays at /usr/bin/git; wrapper at /usr/local/bin/git takes PATH priority.
+COPY git-wrapper.sh /usr/local/bin/git
+RUN chmod +x /usr/local/bin/git \
+    && /usr/local/bin/git --version
 
 # Create app directory
 WORKDIR /app

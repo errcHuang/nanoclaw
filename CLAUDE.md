@@ -30,9 +30,9 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 
-Codex is treated as a repo-local developer workflow aid unless this fork adds
-explicit runtime integration. Do not assume NanoClaw agents can execute through
-Codex by default.
+Codex is wired into the **cardmaxxing group only** (see `docs/CARDMAXXING-LOOP.md`).
+All other groups still cannot execute through Codex. Do not assume Codex is available
+in any other group context.
 
 ## Development
 

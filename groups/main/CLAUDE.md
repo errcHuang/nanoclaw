@@ -87,9 +87,11 @@ Privacy and data handling:
 
 Codex workflow boundary:
 - NanoClaw's default execution runtime is Claude Agent SDK, not Codex.
-- Treat Codex as an optional external, repo-local coding workflow when the user explicitly wants Codex-oriented help.
-- Do not claim Codex execution support inside NanoClaw containers or chat agents unless the repo has been explicitly wired for that.
-- When discussing Codex, clearly distinguish advisory documentation and local developer workflows from built-in NanoClaw capabilities.
+- Codex is wired into the `cardmaxxing` group only (see `docs/CARDMAXXING-LOOP.md`).
+  The cardmaxxing group runs daily to create draft PRs on `Cardmaxxing/cardmaxxing` from `claw`-labeled issues.
+  It uses a credential-less push model: the container cannot push directly; pushes go through the host IPC `request_pr` handler.
+- Do not claim Codex execution support for any other group — it is not available.
+- When discussing Codex, clearly distinguish the cardmaxxing-group runtime from general NanoClaw capabilities.
 
 ## AVAILABLE TOOLS
 

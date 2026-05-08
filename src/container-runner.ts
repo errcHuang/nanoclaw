@@ -199,6 +199,7 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'replies'), { recursive: true });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -235,14 +236,38 @@ function buildVolumeMounts(
 /**
  * Read allowed secrets from .env for passing to the container via stdin.
  * Secrets are never written to disk or mounted as files.
+ *
+ * GITHUB_TOKEN_RO: read-only PAT for Cardmaxxing/cardmaxxing (issues/PRs read, contents read).
+ *   Passed as GH_TOKEN so gh CLI picks it up automatically.
+ * OPENAI_API_KEY: fallback for Codex CLI if not using OAuth (optional).
+ * CODEX_AUTH_JSON: content of ~/.codex/auth.json for OAuth-based Codex auth.
+ *   The agent writes this to /home/node/.codex/auth.json before running codex.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile([
+  const env = readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     'OPEN_BRAIN_KEY',
     'GOOGLE_MAPS_API_KEY',
+    'GITHUB_TOKEN_RO',
+    'OPENAI_API_KEY',
   ]);
+
+  // Pass codex OAuth credentials if the user is logged in via `codex login`
+  const codexAuthPath = path.join(getHomeDir(), '.codex', 'auth.json');
+  if (fs.existsSync(codexAuthPath)) {
+    try {
+      env.CODEX_AUTH_JSON = fs.readFileSync(codexAuthPath, 'utf-8');
+    } catch { /* ignore */ }
+  }
+
+  // Expose GITHUB_TOKEN_RO as GH_TOKEN so gh CLI authenticates without extra config
+  if (env.GITHUB_TOKEN_RO) {
+    env.GH_TOKEN = env.GITHUB_TOKEN_RO;
+    delete env.GITHUB_TOKEN_RO;
+  }
+
+  return env;
 }
 
 function readContainerEnv(): Record<string, string> {

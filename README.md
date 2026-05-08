@@ -99,6 +99,14 @@ The codebase is small enough that Claude can safely modify it.
 If you prefer to use Codex for local code changes or code review in your fork,
 run `/add-codex` so the repo guidance stays explicit about those boundaries.
 
+## Workflows
+
+Pre-built automated workflows included in this fork:
+
+| Workflow | Description |
+|----------|-------------|
+| [Cardmaxxing Issue→PR Loop](docs/CARDMAXXING-LOOP.md) | Daily cron that picks up `claw`-labeled GitHub issues, runs Codex to implement them, and opens draft PRs — all with a credential-less push model so the container literally cannot push to main |
+
 ## Contributing
 
 **Don't add features. Add skills.**

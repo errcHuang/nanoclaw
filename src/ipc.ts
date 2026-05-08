@@ -1,4 +1,6 @@
+import { spawnSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
@@ -10,6 +12,7 @@ import {
   MAIN_GROUP_FOLDER,
   TIMEZONE,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { AvailableGroup, writeTasksSnapshot } from './container-runner.js';
 import {
   createTask,
@@ -348,6 +351,11 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For request_pr
+    requestId?: string;
+    branch?: string;
+    body?: string;
+    issueNumber?: number;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -661,7 +669,177 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'request_pr':
+      await handleRequestPr(data, sourceGroup, deps);
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
+  }
+}
+
+// Forbidden path patterns — reject PRs that touch these files
+const FORBIDDEN_PR_PATHS = [
+  /^\.github\/workflows\//,
+  /^\.env/,
+];
+
+const CARDMAXXING_GROUP_FOLDER = 'cardmaxxing';
+const CARDMAXXING_BRANCH_REGEX = /^claw\/issue-\d+$/;
+const BOT_CLONE_DIR = path.join(
+  process.env.HOME || os.homedir(),
+  '.cache', 'nanoclaw', 'repos', 'cardmaxxing',
+);
+
+async function handleRequestPr(
+  data: {
+    requestId?: string;
+    branch?: string;
+    title?: string;
+    body?: string;
+    issueNumber?: number;
+  },
+  sourceGroup: string,
+  deps: IpcDeps,
+): Promise<void> {
+  const replyDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'replies');
+
+  const writeReply = (requestId: string, payload: { success: boolean; prUrl?: string; error?: string }) => {
+    const replyFile = path.join(replyDir, `${requestId}.json`);
+    fs.mkdirSync(replyDir, { recursive: true });
+    fs.writeFileSync(replyFile, JSON.stringify(payload));
+    logger.info({ requestId, sourceGroup, payload }, 'request_pr reply written');
+  };
+
+  const { requestId, branch, title, body } = data;
+
+  if (!requestId || !branch || !title || !body) {
+    logger.warn({ data, sourceGroup }, 'request_pr missing required fields');
+    if (requestId) writeReply(requestId, { success: false, error: 'Missing required fields: requestId, branch, title, body' });
+    return;
+  }
+
+  // Authorization: only the cardmaxxing group may request PRs
+  if (sourceGroup !== CARDMAXXING_GROUP_FOLDER) {
+    logger.warn({ sourceGroup }, 'request_pr blocked: only cardmaxxing group may use this verb');
+    writeReply(requestId, { success: false, error: 'Unauthorized: request_pr is restricted to the cardmaxxing group' });
+    return;
+  }
+
+  // Branch name validation (Layer B)
+  if (!CARDMAXXING_BRANCH_REGEX.test(branch)) {
+    logger.warn({ branch }, 'request_pr blocked: branch name failed regex validation');
+    writeReply(requestId, { success: false, error: `Branch "${branch}" does not match required pattern ^claw/issue-\\d+$` });
+    return;
+  }
+
+  // Bot clone must exist
+  if (!fs.existsSync(BOT_CLONE_DIR)) {
+    const err = `Bot clone not found at ${BOT_CLONE_DIR}. Run scripts/setup-cardmaxxing.ts first.`;
+    logger.error({ BOT_CLONE_DIR }, err);
+    writeReply(requestId, { success: false, error: err });
+    return;
+  }
+
+  // Fetch latest state and diff against main
+  const fetchResult = spawnSync('git', ['-C', BOT_CLONE_DIR, 'fetch', 'origin'], { encoding: 'utf-8' });
+  if (fetchResult.status !== 0) {
+    const err = `git fetch failed: ${fetchResult.stderr}`;
+    logger.error({ err }, 'request_pr: git fetch failed');
+    writeReply(requestId, { success: false, error: err });
+    return;
+  }
+
+  const diffResult = spawnSync(
+    'git',
+    ['-C', BOT_CLONE_DIR, 'diff', '--name-only', `origin/main..${branch}`],
+    { encoding: 'utf-8' },
+  );
+  if (diffResult.status !== 0) {
+    const err = `git diff failed: ${diffResult.stderr}`;
+    logger.error({ branch, err }, 'request_pr: diff check failed');
+    writeReply(requestId, { success: false, error: err });
+    return;
+  }
+
+  const changedFiles = diffResult.stdout.trim().split('\n').filter(Boolean);
+  for (const file of changedFiles) {
+    for (const pattern of FORBIDDEN_PR_PATHS) {
+      if (pattern.test(file)) {
+        const err = `PR blocked: changed file "${file}" matches forbidden pattern ${pattern}`;
+        logger.warn({ branch, file }, err);
+        writeReply(requestId, { success: false, error: err });
+        return;
+      }
+    }
+  }
+
+  // Read push PAT (host-only — never passed to containers)
+  const pushEnv = readEnvFile(['GITHUB_TOKEN_PUSH']);
+  const pushToken = pushEnv.GITHUB_TOKEN_PUSH;
+  if (!pushToken) {
+    const err = 'GITHUB_TOKEN_PUSH not set in .env';
+    logger.error(err);
+    writeReply(requestId, { success: false, error: err });
+    return;
+  }
+
+  // Push branch (using embedded token in URL so no credential helper needed)
+  const pushUrl = `https://x-access-token:${pushToken}@github.com/Cardmaxxing/cardmaxxing.git`;
+  const pushResult = spawnSync(
+    'git',
+    ['-C', BOT_CLONE_DIR, 'push', pushUrl, `${branch}:refs/heads/${branch}`],
+    { encoding: 'utf-8', timeout: 60_000 },
+  );
+  if (pushResult.status !== 0) {
+    const err = `git push failed: ${pushResult.stderr}`;
+    logger.error({ branch, err }, 'request_pr: push failed');
+    writeReply(requestId, { success: false, error: err });
+    return;
+  }
+  logger.info({ branch }, 'request_pr: branch pushed successfully');
+
+  // Create draft PR
+  const prResult = spawnSync(
+    'gh',
+    [
+      'pr', 'create',
+      '--repo', 'Cardmaxxing/cardmaxxing',
+      '--draft',
+      '--base', 'main',
+      '--head', branch,
+      '--title', title,
+      '--body', body,
+    ],
+    {
+      encoding: 'utf-8',
+      timeout: 60_000,
+      env: { ...process.env, GITHUB_TOKEN: pushToken },
+    },
+  );
+
+  if (prResult.status !== 0) {
+    const err = `gh pr create failed: ${prResult.stderr}`;
+    logger.error({ branch, err }, 'request_pr: PR creation failed');
+    writeReply(requestId, { success: false, error: err });
+    return;
+  }
+
+  const prUrl = prResult.stdout.trim();
+  logger.info({ branch, prUrl }, 'request_pr: draft PR created');
+  writeReply(requestId, { success: true, prUrl });
+
+  // Notify main group
+  if (prUrl) {
+    const registeredGroups = deps.registeredGroups();
+    const mainGroupEntry = Object.entries(registeredGroups).find(
+      ([, g]) => g.folder === MAIN_GROUP_FOLDER,
+    );
+    if (mainGroupEntry) {
+      const [mainJid] = mainGroupEntry;
+      await deps.sendMessage(mainJid, `Cardmaxxing PR opened: ${prUrl}`).catch((err) => {
+        logger.warn({ err }, 'request_pr: failed to notify main group');
+      });
+    }
   }
 }
