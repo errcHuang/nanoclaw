@@ -127,6 +127,10 @@ codex login
 This caches OAuth credentials to `~/.codex/auth.json`. NanoClaw reads that file
 and injects it into the container automatically — no API key needed.
 
+**When the token expires:** Codex will start failing inside the container. Fix by running
+`codex login` on the host again, then `systemctl --user restart nanoclaw` to pick up the
+refreshed `~/.codex/auth.json`.
+
 Alternatively, add `OPENAI_API_KEY=sk-...` to `.env` if you prefer an API key.
 
 ### 3. Add to `.env`
@@ -136,7 +140,7 @@ GITHUB_TOKEN_RO=github_pat_...
 GITHUB_TOKEN_PUSH=github_pat_...
 ```
 
-### 3. Run setup script
+### 4. Run setup script
 
 ```bash
 npx tsx scripts/setup-cardmaxxing.ts
@@ -144,14 +148,14 @@ npx tsx scripts/setup-cardmaxxing.ts
 
 This clones the repo, creates bot memory files, registers the group, and inserts the scheduled tasks.
 
-### 4. Rebuild and restart
+### 5. Rebuild and restart
 
 ```bash
 ./container/build.sh
 systemctl --user restart nanoclaw
 ```
 
-### 5. Verify
+### 6. Verify
 
 ```bash
 # Container has gh and codex
